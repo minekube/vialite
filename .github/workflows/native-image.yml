@@ -1,0 +1,56 @@
+name: Build native image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'build/**'
+      - '.github/workflows/native-image.yml'
+  pull_request:
+    paths:
+      - 'build/**'
+      - '.github/workflows/native-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read GraalVM image pin
+        id: pins
+        run: echo "graalvm=$(tr -d '[:space:]' < build/graalvm.version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build shared library image target
+        run: |
+          docker build \
+            -f build/Dockerfile \
+            --build-arg GRAALVM_IMAGE="${{ steps.pins.outputs.graalvm }}" \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            --target shared \
+            -t ghcr.io/minekube/vialite:native-ci \
+            .
+
+      - name: Extract artifacts
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p artifacts
+          id="$(docker create ghcr.io/minekube/vialite:native-ci)"
+          docker cp "$id:/out/." artifacts/
+          docker rm "$id"
+          ls -la artifacts
+          test -f artifacts/libvialite-linux-amd64.so
+          grep -E 'vialite_init.*graal_isolatethread_t' artifacts/libvialite.h
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: vialite-native
+          path: artifacts/
+          if-no-files-found: error

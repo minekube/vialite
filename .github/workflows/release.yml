@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag to publish or repair. Empty uses the workflow ref.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Read GraalVM image pin
+        id: pins
+        run: echo "graalvm=$(tr -d '[:space:]' < build/graalvm.version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build native artifact from release ref
+        run: |
+          docker build \
+            -f build/Dockerfile \
+            --build-arg GRAALVM_IMAGE="${{ steps.pins.outputs.graalvm }}" \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            --target shared \
+            -t ghcr.io/minekube/vialite:native-release \
+            .
+          mkdir -p artifacts
+          id="$(docker create ghcr.io/minekube/vialite:native-release)"
+          docker cp "$id:/out/." artifacts/
+          docker rm "$id"
+          ls -la artifacts
+
+      - name: Generate checksums
+        run: |
+          mkdir -p artifacts
+          ( cd artifacts
+            shopt -s globstar nullglob
+            for f in **/*; do
+              [ -f "$f" ] || continue
+              base="$(basename "$f")"
+              case "$base" in checksums.txt) continue;; esac
+              sha256sum "$f" | awk -v b="$base" '{ print $1 "  " b }'
+            done | sort -k2 > checksums.txt
+          )
+          cat artifacts/checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/**/*

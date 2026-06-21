@@ -1,0 +1,59 @@
+version: "3"
+
+vars:
+  IMAGE_REPO: ghcr.io/minekube/vialite
+
+tasks:
+  default:
+    desc: list available tasks
+    cmds:
+      - task --list
+
+  setup:
+    desc: install module dependencies
+    cmds:
+      - cd go && go mod download
+
+  test:go:
+    desc: run Go tests
+    dir: go
+    cmds:
+      - go test ./...
+
+  test:
+    desc: run all tests
+    deps: [test:go]
+
+  lint:go:
+    desc: run Go linter
+    dir: go
+    cmds:
+      - golangci-lint run
+
+  lint:md:
+    desc: run markdown lint
+    cmds:
+      - markdownlint-cli2 '**/*.md' '#build/.work/**'
+
+  lint:yaml:
+    desc: run YAML lint
+    cmds:
+      - yamllint .
+
+  lint:
+    desc: run all linters
+    deps: [lint:go, lint:md, lint:yaml]
+
+  overlay:apply:
+    desc: clone ViaProxy at the pinned ref and apply the vialite overlay
+    cmds:
+      - bash build/apply-overlay.sh
+
+  build:native:
+    desc: build vialite native image through Docker
+    cmds:
+      - docker build -f build/Dockerfile --target shared -t {{.IMAGE_REPO}}:local-shared .
+
+  pre-commit:
+    desc: run checks used before pushing
+    deps: [test, lint]

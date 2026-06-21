@@ -35,6 +35,7 @@
 ### Task 1: Repository Baseline
 
 **Files:**
+
 - Create: `README.md`
 - Create: `docs/architecture.md`
 - Create: `docs/gate.md`
@@ -76,6 +77,7 @@ git commit -m "chore: add repository baseline"
 ### Task 2: Go Module Public API
 
 **Files:**
+
 - Create: `go/go.mod`
 - Create: `go/doc.go`
 - Create: `go/vialite.go`
@@ -125,6 +127,7 @@ git commit -m "feat: add vialite Go API"
 ### Task 3: Artifact Lookup, Download, And Embed Support
 
 **Files:**
+
 - Create: `go/download.go`
 - Create: `go/download_test.go`
 - Create: `go/locate.go`
@@ -176,6 +179,7 @@ git commit -m "feat: add native artifact resolution"
 ### Task 4: Server Lifecycle And Runners
 
 **Files:**
+
 - Create: `go/server.go`
 - Create: `go/server_test.go`
 - Create: `go/embedded.go`
@@ -190,7 +194,10 @@ git commit -m "feat: add native artifact resolution"
 
 - [ ] **Step 1: Write lifecycle tests**
 
-Tests must cover `New`, double start rejection, stop before start, graceful cancellation, `Healthy`, `BackendDialAddress`, embedded runner fake behavior, and subprocess command construction with a fake executable script.
+Tests must cover `New`, double start rejection, stop before start, graceful
+cancellation, `WaitReady`, `Healthy`, `BackendDialAddress`, embedded runner
+fake behavior, subprocess command construction with a fake executable
+script, and restart policy behavior.
 
 - [ ] **Step 2: Run tests and verify they fail before implementation**
 
@@ -204,7 +211,9 @@ Expected: fails because lifecycle files are missing.
 
 - [ ] **Step 3: Implement server and runners**
 
-Implement `Server`, `runner`, embedded runner symbol registration, subprocess runner restart loop, and backend address lookup.
+Implement `Server`, `runner`, readiness publication, embedded runner symbol
+registration, Graal isolate lifecycle, subprocess runner restart loop, and
+backend address lookup.
 
 - [ ] **Step 4: Run tests**
 
@@ -228,6 +237,7 @@ git commit -m "feat: add vialite server lifecycle"
 ### Task 5: Gate Adapter
 
 **Files:**
+
 - Create: `go/integration/gate/config.go`
 - Create: `go/integration/gate/config_test.go`
 - Create: `go/integration/gate/gate.go`
@@ -235,7 +245,9 @@ git commit -m "feat: add vialite server lifecycle"
 
 - [ ] **Step 1: Write adapter tests**
 
-Tests must cover disabled config returns nil, backend conversion, mode conversion, forwarding conversion, invalid mode, invalid forwarding mode, fake server lifecycle, and `BackendDialAddress`.
+Tests must cover disabled config returns nil, backend conversion, mode
+conversion, forwarding conversion, invalid mode, invalid forwarding mode,
+fake server lifecycle, readiness, and `BackendDialAddress`.
 
 - [ ] **Step 2: Run tests and verify they fail before implementation**
 
@@ -249,7 +261,8 @@ Expected: fails because adapter files are missing.
 
 - [ ] **Step 3: Implement Gate adapter**
 
-Implement `Config`, `BackendConfig`, `toOptions`, `Via`, `New`, `Start`, `Stop`, `Healthy`, and `BackendDialAddress`.
+Implement `Config`, `BackendConfig`, `toOptions`, `Via`, `New`, `Start`,
+`WaitReady`, `Stop`, `Healthy`, and `BackendDialAddress`.
 
 - [ ] **Step 4: Run tests**
 
@@ -273,6 +286,7 @@ git commit -m "feat: add Gate adapter"
 ### Task 6: Native Build Overlay Scaffold
 
 **Files:**
+
 - Create: `build/via.version`
 - Create: `build/graalvm.version`
 - Create: `build/apply-overlay.sh`
@@ -320,6 +334,7 @@ git commit -m "build: add native Via overlay scaffold"
 ### Task 7: CI And Release Automation
 
 **Files:**
+
 - Create: `.github/workflows/ci.yml`
 - Create: `.github/workflows/native-image.yml`
 - Create: `.github/workflows/release.yml`
@@ -360,6 +375,7 @@ git commit -m "ci: add vialite automation"
 ### Task 8: Final Verification
 
 **Files:**
+
 - Modify as needed based on verification failures.
 
 - [ ] **Step 1: Run Go tests**
