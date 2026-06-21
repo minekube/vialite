@@ -1,6 +1,6 @@
 plugins {
     java
-    id("org.graalvm.buildtools.native") version "0.10.6"
+    id("org.graalvm.buildtools.native") version "1.1.2"
 }
 
 repositories {
@@ -49,6 +49,7 @@ java {
 }
 
 graalvmNative {
+    toolchainDetection.set(false)
     binaries {
         named("main") {
             imageName.set("vialite")
