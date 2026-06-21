@@ -36,10 +36,15 @@ not the first frontend compatibility layer for clients Gate cannot parse.
 
 | Component | Status |
 | --- | --- |
-| Go module `go.minekube.com/vialite` | Lifecycle, artifact lookup, embedded/subprocess runners, backend dial address API |
+| Go module `go.minekube.com/vialite` | Lifecycle, readiness, artifact lookup, embedded/subprocess runners, backend dial address API |
 | Gate adapter `go.minekube.com/vialite/integration/gate` | Gate-shaped config and fakeable lifecycle wrapper |
-| Native build scaffold | ViaProxy soft-fork overlay and explicit C ABI contract |
+| Native build scaffold | ViaProxy soft-fork overlay and isolate-thread-aware C ABI contract |
 | Release/update loop | CI, release-please, Renovate, checksummed GitHub Release assets |
+
+The current native artifact is an ABI/build scaffold. It proves the
+GraalVM shared-library shape and Go loading path, but full Via runtime
+translation, backend probing, and forwarding preservation are target
+behavior for the next implementation slice.
 
 ## Go Quick Start
 
@@ -59,6 +64,9 @@ if err != nil {
     return err
 }
 go func() { _ = srv.Start(ctx) }()
+if err := srv.WaitReady(ctx); err != nil {
+    return err
+}
 
 addr, err := srv.BackendDialAddress("lobby")
 if err != nil {

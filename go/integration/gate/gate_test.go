@@ -40,6 +40,9 @@ func TestViaLifecycle(t *testing.T) {
 	if err := via.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	if err := via.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
 	if !via.Healthy() {
 		t.Fatal("Healthy = false")
 	}
@@ -99,6 +102,8 @@ func (f *fakeServer) Stop(context.Context) error {
 	f.healthy = false
 	return nil
 }
+
+func (f *fakeServer) WaitReady(context.Context) error { return f.startErr }
 
 func (f *fakeServer) Healthy() bool { return f.healthy }
 

@@ -2,6 +2,7 @@ package vialite
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"sync"
@@ -37,23 +38,66 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 		r.backends[backend.Name] = loopbackBackendAddress(s.opts.Bind, i)
 	}
 
-	cmd := exec.CommandContext(ctx, bin, "--config", configPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	r.mu.Lock()
-	r.cmd = cmd
-	r.mu.Unlock()
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	r.healthy.Store(true)
-	defer r.healthy.Store(false)
+	backoff := s.opts.RestartPolicy.MinBackoff
+	for attempt := 0; ; attempt++ {
+		cmd := exec.Command(bin, "--config", configPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		r.mu.Lock()
+		r.cmd = cmd
+		r.mu.Unlock()
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		r.healthy.Store(true)
+		s.markReady(nil)
 
-	err = cmd.Wait()
-	if ctx.Err() != nil {
-		return ctx.Err()
+		err := r.waitProcess(ctx, cmd, s.opts.ShutdownTimeout)
+		r.healthy.Store(false)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil {
+			return nil
+		}
+		if s.opts.RestartPolicy.MaxRetries >= 0 && attempt >= s.opts.RestartPolicy.MaxRetries {
+			return err
+		}
+		if sleepContext(ctx, backoff) != nil {
+			return nil
+		}
+		backoff *= 2
+		if backoff > s.opts.RestartPolicy.MaxBackoff {
+			backoff = s.opts.RestartPolicy.MaxBackoff
+		}
 	}
-	return err
+}
+
+func (r *subprocessRunner) waitProcess(ctx context.Context, cmd *exec.Cmd, shutdownTimeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		if err := terminateProcess(cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+		select {
+		case err := <-done:
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		case <-time.After(shutdownTimeout):
+			if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				return err
+			}
+			<-done
+			return nil
+		}
+	}
 }
 
 func (r *subprocessRunner) isHealthy() bool {

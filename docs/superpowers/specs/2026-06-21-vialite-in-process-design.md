@@ -125,26 +125,35 @@ type Server struct {
 
 func New(opts Options) (*Server, error)
 func (s *Server) Start(ctx context.Context) error
+func (s *Server) WaitReady(ctx context.Context) error
 func (s *Server) Stop(ctx context.Context) error
 func (s *Server) Healthy() bool
 func (s *Server) BackendDialAddress(name string) (string, error)
 ```
 
-`BackendDialAddress` returns the local address Gate should dial for a translated backend. This keeps the first implementation compatible with Gate's current `net.Conn` backend connection model. Direct file-descriptor or socketpair handoff is excluded from this spec.
+`Start` runs until shutdown. `WaitReady` blocks until the native runtime
+has published backend dial addresses or startup fails. `BackendDialAddress`
+returns the local address Gate should dial for a translated backend. This
+keeps the first implementation compatible with Gate's current `net.Conn`
+backend connection model. Direct file-descriptor or socketpair handoff is
+excluded from this spec.
 
 ## Native C ABI
 
 The native layer exports a compact lifecycle API:
 
 ```c
-int vialite_init(char* config_json);
-int vialite_run(void);
-int vialite_shutdown(void);
-int vialite_status(void);
-char* vialite_backend_address(char* backend_name);
+int vialite_init(graal_isolatethread_t* thread, char* config_json);
+int vialite_run(graal_isolatethread_t* thread);
+int vialite_shutdown(graal_isolatethread_t* thread);
+int vialite_status(graal_isolatethread_t* thread);
+char* vialite_backend_address(graal_isolatethread_t* thread, char* backend_name);
 ```
 
-The Go embedded runner creates a Graal isolate, calls `vialite_init`, starts `vialite_run`, calls `vialite_backend_address` for configured backends, and uses `vialite_shutdown` on context cancellation.
+The Go embedded runner creates a Graal isolate, calls `vialite_init` with
+the isolate thread, starts `vialite_run`, calls `vialite_backend_address`
+for configured backends, and uses `vialite_shutdown` on context
+cancellation.
 
 `config_json` carries a stable JSON structure with bind address, Gate protocol, backend list, forwarding mode, version detection mode, and logging configuration. JSON is preferred over many C ABI arguments because it keeps the ABI stable as configuration grows.
 

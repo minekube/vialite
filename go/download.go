@@ -145,10 +145,22 @@ func fetchExpectedSha(ctx context.Context, base, version, assetName string) (str
 		}
 		name := strings.TrimPrefix(fields[1], "*")
 		if name == assetName || strings.HasSuffix(name, "/"+assetName) {
-			return strings.ToLower(fields[0]), nil
+			sha := strings.ToLower(fields[0])
+			if !isSHA256Hex(sha) {
+				return "", fmt.Errorf("%w for %s: %q", ErrInvalidChecksum, assetName, fields[0])
+			}
+			return sha, nil
 		}
 	}
 	return "", fmt.Errorf("vialite: %s not listed in checksums.txt for %s", assetName, version)
+}
+
+func isSHA256Hex(s string) bool {
+	if len(s) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 func downloadFile(ctx context.Context, url, dest string) error {

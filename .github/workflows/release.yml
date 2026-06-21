@@ -14,7 +14,6 @@ on:
 permissions:
   contents: write
   id-token: write
-  actions: read
 
 jobs:
   release:
@@ -25,17 +24,25 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.release_tag || github.ref }}
 
-      - name: Download latest native artifacts for release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Read GraalVM image pin
+        id: pins
+        run: echo "graalvm=$(tr -d '[:space:]' < build/graalvm.version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build native artifact from release ref
         run: |
+          docker build \
+            -f build/Dockerfile \
+            --build-arg GRAALVM_IMAGE="${{ steps.pins.outputs.graalvm }}" \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            --target shared \
+            -t ghcr.io/minekube/vialite:native-release \
+            .
           mkdir -p artifacts
-          run_id="$(gh run list --workflow=native-image.yml --branch=main --status=success --limit=1 --json databaseId --jq '.[0].databaseId // ""')"
-          if [ -z "$run_id" ]; then
-            echo "::warning::No native-image artifacts found; publishing checksums for source-only release"
-            exit 0
-          fi
-          gh run download "$run_id" --dir artifacts --pattern 'vialite-native'
+          id="$(docker create ghcr.io/minekube/vialite:native-release)"
+          docker cp "$id:/out/." artifacts/
+          docker rm "$id"
+          ls -la artifacts
 
       - name: Generate checksums
         run: |

@@ -2,6 +2,7 @@ package vialite
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,6 +65,18 @@ func TestFetchExpectedSha(t *testing.T) {
 	}
 }
 
+func TestFetchExpectedShaRejectsMalformedSHA256(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not-a-sha  libvialite-linux-amd64.so\n"))
+	}))
+	defer srv.Close()
+
+	_, err := fetchExpectedSha(context.Background(), srv.URL, "v0.1.0", "libvialite-linux-amd64.so")
+	if !errors.Is(err, ErrInvalidChecksum) {
+		t.Fatalf("fetchExpectedSha malformed sha = %v, want ErrInvalidChecksum", err)
+	}
+}
+
 func TestVerifiedDownloadPath(t *testing.T) {
 	got := verifiedDownloadPath("/cache", "vialite-linux-amd64", "abc123")
 	want := filepath.Join("/cache", "abc123", "vialite-linux-amd64")
@@ -108,5 +121,39 @@ func TestDownloadAssetVerifiesChecksum(t *testing.T) {
 	}
 	if !strings.Contains(path, sha) {
 		t.Fatalf("download path %q does not contain sha %q", path, sha)
+	}
+}
+
+func TestDownloadAssetLibraryUsesPlatformNamedReleaseAsset(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "amd64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-library"
+	sha := "01307e18b53bf651632b9119874fdff0771bfe2f2dafc10af8a901b394842a70"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/checksums.txt"):
+			_, _ = w.Write([]byte(sha + "  libvialite-linux-amd64.so\n"))
+		case strings.HasSuffix(r.URL.Path, "/libvialite-linux-amd64.so"):
+			_, _ = w.Write([]byte(body))
+		case strings.HasSuffix(r.URL.Path, "/libvialite.so"):
+			t.Fatalf("download used unqualified libvialite.so release asset")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	path, err := downloadAsset(context.Background(), Options{Version: "v0.1.0", Mirror: srv.URL}, assetKindLibrary)
+	if err != nil {
+		t.Fatalf("downloadAsset library: %v", err)
+	}
+	if filepath.Base(path) != "libvialite-linux-amd64.so" {
+		t.Fatalf("downloaded path base = %q", filepath.Base(path))
 	}
 }

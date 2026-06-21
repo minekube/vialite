@@ -1,6 +1,9 @@
 package vialite
 
-import "fmt"
+import (
+	"fmt"
+	"unsafe"
+)
 
 type nativeExitError struct {
 	op   string
@@ -12,9 +15,11 @@ func (e nativeExitError) Error() string {
 }
 
 type nativeSymbols struct {
-	init           func(string) int
-	run            func() int
-	shutdown       func() int
-	status         func() int
-	backendAddress func(string) string
+	createIsolate   func(unsafe.Pointer, *unsafe.Pointer, *unsafe.Pointer) int
+	tearDownIsolate func(unsafe.Pointer) int
+	init            func(unsafe.Pointer, string) int
+	run             func(unsafe.Pointer) int
+	shutdown        func(unsafe.Pointer) int
+	status          func(unsafe.Pointer) int
+	backendAddress  func(unsafe.Pointer, string) string
 }

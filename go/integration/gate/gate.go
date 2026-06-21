@@ -10,6 +10,7 @@ import (
 
 type server interface {
 	Start(ctx context.Context) error
+	WaitReady(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Healthy() bool
 	BackendDialAddress(name string) (string, error)
@@ -58,6 +59,13 @@ func (v *Via) Stop(ctx context.Context) error {
 		return nil
 	}
 	return v.server.Stop(ctx)
+}
+
+func (v *Via) WaitReady(ctx context.Context) error {
+	if v == nil {
+		return vialite.ErrNotStarted
+	}
+	return v.server.WaitReady(ctx)
 }
 
 func (v *Via) Healthy() bool {

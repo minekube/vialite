@@ -23,7 +23,7 @@ func locateBinary(ctx context.Context, opts Options) (string, error) {
 		}
 		return env, nil
 	}
-	if path, ok, err := extractEmbeddedBinary(); err != nil {
+	if path, ok, err := extractEmbeddedBinary(); err != nil && !errors.Is(err, ErrUnsupportedEmbeddedMode) {
 		return "", err
 	} else if ok {
 		return path, nil
@@ -54,7 +54,7 @@ func locateLibrary(ctx context.Context, opts Options) (string, error) {
 		}
 		return env, nil
 	}
-	if path, ok, err := extractEmbeddedLibrary(); err != nil {
+	if path, ok, err := extractEmbeddedLibrary(); err != nil && !errors.Is(err, ErrUnsupportedEmbeddedMode) {
 		return "", err
 	} else if ok {
 		return path, nil

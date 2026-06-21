@@ -194,7 +194,10 @@ git commit -m "feat: add native artifact resolution"
 
 - [ ] **Step 1: Write lifecycle tests**
 
-Tests must cover `New`, double start rejection, stop before start, graceful cancellation, `Healthy`, `BackendDialAddress`, embedded runner fake behavior, and subprocess command construction with a fake executable script.
+Tests must cover `New`, double start rejection, stop before start, graceful
+cancellation, `WaitReady`, `Healthy`, `BackendDialAddress`, embedded runner
+fake behavior, subprocess command construction with a fake executable
+script, and restart policy behavior.
 
 - [ ] **Step 2: Run tests and verify they fail before implementation**
 
@@ -208,7 +211,9 @@ Expected: fails because lifecycle files are missing.
 
 - [ ] **Step 3: Implement server and runners**
 
-Implement `Server`, `runner`, embedded runner symbol registration, subprocess runner restart loop, and backend address lookup.
+Implement `Server`, `runner`, readiness publication, embedded runner symbol
+registration, Graal isolate lifecycle, subprocess runner restart loop, and
+backend address lookup.
 
 - [ ] **Step 4: Run tests**
 
@@ -240,7 +245,9 @@ git commit -m "feat: add vialite server lifecycle"
 
 - [ ] **Step 1: Write adapter tests**
 
-Tests must cover disabled config returns nil, backend conversion, mode conversion, forwarding conversion, invalid mode, invalid forwarding mode, fake server lifecycle, and `BackendDialAddress`.
+Tests must cover disabled config returns nil, backend conversion, mode
+conversion, forwarding conversion, invalid mode, invalid forwarding mode,
+fake server lifecycle, readiness, and `BackendDialAddress`.
 
 - [ ] **Step 2: Run tests and verify they fail before implementation**
 
@@ -254,7 +261,8 @@ Expected: fails because adapter files are missing.
 
 - [ ] **Step 3: Implement Gate adapter**
 
-Implement `Config`, `BackendConfig`, `toOptions`, `Via`, `New`, `Start`, `Stop`, `Healthy`, and `BackendDialAddress`.
+Implement `Config`, `BackendConfig`, `toOptions`, `Via`, `New`, `Start`,
+`WaitReady`, `Stop`, `Healthy`, and `BackendDialAddress`.
 
 - [ ] **Step 4: Run tests**
 

@@ -31,6 +31,8 @@ jobs:
           docker build \
             -f build/Dockerfile \
             --build-arg GRAALVM_IMAGE="${{ steps.pins.outputs.graalvm }}" \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
             --target shared \
             -t ghcr.io/minekube/vialite:native-ci \
             .
@@ -43,6 +45,8 @@ jobs:
           docker cp "$id:/out/." artifacts/
           docker rm "$id"
           ls -la artifacts
+          test -f artifacts/libvialite-linux-amd64.so
+          grep -E 'vialite_init.*graal_isolatethread_t' artifacts/libvialite.h
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'

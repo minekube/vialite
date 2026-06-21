@@ -26,7 +26,11 @@ func TestNewSelectsEmbeddedRunner(t *testing.T) {
 }
 
 func TestServerLifecycle(t *testing.T) {
-	fr := &fakeRunner{started: make(chan struct{}), backends: map[string]string{"lobby": "127.0.0.1:40000"}}
+	fr := &fakeRunner{
+		started:  make(chan struct{}),
+		ready:    make(chan struct{}),
+		backends: map[string]string{"lobby": "127.0.0.1:40000"},
+	}
 	srv := &Server{runner: fr, opts: Options{Backends: []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}}}}
 
 	if err := srv.Stop(context.Background()); !errors.Is(err, ErrNotStarted) {
@@ -41,6 +45,13 @@ func TestServerLifecycle(t *testing.T) {
 	case <-fr.started:
 	case <-time.After(time.Second):
 		t.Fatal("runner did not start")
+	}
+	if _, err := srv.BackendDialAddress("lobby"); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("BackendDialAddress before ready = %v, want ErrNotReady", err)
+	}
+	close(fr.ready)
+	if err := srv.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
 	}
 	if !srv.Healthy() {
 		t.Fatal("Healthy = false after start")
@@ -57,13 +68,16 @@ func TestServerLifecycle(t *testing.T) {
 		t.Fatalf("BackendDialAddress = %q", got)
 	}
 
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatalf("Start returned %v, want context.Canceled", err)
+	if err := srv.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Start returned %v, want nil", err)
 	}
 	if srv.Healthy() {
 		t.Fatal("Healthy = true after stop")
 	}
+	cancel()
 }
 
 func TestBackendDialAddressErrors(t *testing.T) {
@@ -76,27 +90,78 @@ func TestBackendDialAddressErrors(t *testing.T) {
 	fr := srv.runner.(*fakeRunner)
 	go func() { _ = srv.Start(ctx) }()
 	<-fr.started
+	if err := srv.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
 	if _, err := srv.BackendDialAddress("missing"); !errors.Is(err, ErrBackendNotFound) {
 		t.Fatalf("BackendDialAddress missing = %v", err)
 	}
 	cancel()
 }
 
-type fakeRunner struct {
-	started  chan struct{}
-	healthy  bool
-	backends map[string]string
+func TestWaitReadyCanBeCalledBeforeStartGoroutineRuns(t *testing.T) {
+	fr := &fakeRunner{started: make(chan struct{}), backends: map[string]string{"lobby": "127.0.0.1:40000"}}
+	srv := &Server{runner: fr, opts: Options{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ready := make(chan error, 1)
+	go func() { ready <- srv.WaitReady(ctx) }()
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		_ = srv.Start(ctx)
+	}()
+
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("WaitReady: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitReady did not observe start readiness")
+	}
 }
 
-func (f *fakeRunner) run(ctx context.Context, _ *Server) error {
+func TestServerWaitReadyReturnsStartupError(t *testing.T) {
+	startErr := errors.New("boom")
+	srv := &Server{runner: &fakeRunner{started: make(chan struct{}), err: startErr}, opts: Options{}}
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(context.Background()) }()
+	<-srv.runner.(*fakeRunner).started
+
+	if err := srv.WaitReady(context.Background()); !errors.Is(err, startErr) {
+		t.Fatalf("WaitReady = %v, want %v", err, startErr)
+	}
+	if err := <-done; !errors.Is(err, startErr) {
+		t.Fatalf("Start = %v, want %v", err, startErr)
+	}
+}
+
+type fakeRunner struct {
+	started  chan struct{}
+	ready    chan struct{}
+	healthy  bool
+	backends map[string]string
+	err      error
+}
+
+func (f *fakeRunner) run(ctx context.Context, s *Server) error {
 	if f.started == nil {
 		f.started = make(chan struct{})
 	}
+	if f.err != nil {
+		close(f.started)
+		return f.err
+	}
 	f.healthy = true
 	close(f.started)
+	if f.ready != nil {
+		<-f.ready
+	}
+	s.markReady(nil)
 	<-ctx.Done()
 	f.healthy = false
-	return ctx.Err()
+	return nil
 }
 
 func (f *fakeRunner) isHealthy() bool { return f.healthy }

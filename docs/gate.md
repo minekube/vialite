@@ -12,8 +12,8 @@ player / Bedrock
   -> backend
 ```
 
-Gate should start `vialite` with a backend list, then dial
-`BackendDialAddress(serverName)` for servers configured to use Via
+Gate should start `vialite` with a backend list, wait for readiness, then
+dial `BackendDialAddress(serverName)` for servers configured to use Via
 translation.
 
 Example config shape:
@@ -59,3 +59,7 @@ type ServerDialer interface {
 A translated server implementation can dial `vialite.BackendDialAddress`
 instead of the raw backend address while keeping Gate's existing backend
 login flow.
+
+`Start` runs until shutdown. Gate integration code should launch it on the
+same lifecycle as other long-running services, call `WaitReady`, and only
+then route players to Via-backed server entries.
