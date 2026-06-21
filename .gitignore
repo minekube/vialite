@@ -1,0 +1,7 @@
+.DS_Store
+.cache/
+build/.work/
+go/bin/
+go/assets/vialite-*
+go/assets/libvialite-*
+*.tmp
