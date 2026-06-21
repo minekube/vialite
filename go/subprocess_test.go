@@ -4,25 +4,18 @@ import (
 	"context"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 )
 
 func TestSubprocessRunnerStartsAndStops(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell script subprocess test is unix-only")
-	}
-	dir := t.TempDir()
-	script := filepath.Join(dir, "vialite")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile true; do sleep 1; done\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := buildSubprocessHelper(t)
 
 	opts, err := Options{
 		Mode:       ModeSubprocess,
-		BinaryPath: script,
+		BinaryPath: bin,
 		Backends:   []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
 	}.validate()
 	if err != nil {
@@ -34,16 +27,21 @@ func TestSubprocessRunnerStartsAndStops(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- srv.Start(ctx) }()
 
-	deadline := time.After(time.Second)
-	for !srv.Healthy() {
-		select {
-		case <-deadline:
-			cancel()
-			t.Fatal("subprocess never became healthy")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
+	if err := srv.WaitReady(context.Background()); err != nil {
+		cancel()
+		t.Fatalf("WaitReady: %v", err)
 	}
+	addr, err := srv.BackendDialAddress("lobby")
+	if err != nil {
+		cancel()
+		t.Fatalf("BackendDialAddress: %v", err)
+	}
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		cancel()
+		t.Fatalf("dial backend address %s: %v", addr, err)
+	}
+	_ = conn.Close()
 	if err := srv.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
@@ -72,25 +70,16 @@ func TestSubprocessBackendAddressIsDialableWhenBindUsesPortZero(t *testing.T) {
 }
 
 func TestSubprocessRunnerRestartsFailedProcess(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell script subprocess test is unix-only")
-	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "attempt")
 	restarted := filepath.Join(dir, "restarted")
-	script := filepath.Join(dir, "vialite")
-	body := "#!/bin/sh\n" +
-		"if [ ! -f " + marker + " ]; then touch " + marker + "; exit 7; fi\n" +
-		"touch " + restarted + "\n" +
-		"trap 'exit 0' TERM INT\n" +
-		"while true; do sleep 1; done\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := buildSubprocessHelper(t)
+	t.Setenv("VIALITE_HELPER_FAIL_ONCE", marker)
+	t.Setenv("VIALITE_HELPER_RESTARTED", restarted)
 
 	opts, err := Options{
 		Mode:       ModeSubprocess,
-		BinaryPath: script,
+		BinaryPath: bin,
 		RestartPolicy: &RestartPolicy{
 			MinBackoff: time.Millisecond,
 			MaxBackoff: time.Millisecond,
@@ -134,3 +123,73 @@ func TestSubprocessRunnerRestartsFailedProcess(t *testing.T) {
 	}
 	cancel()
 }
+
+func buildSubprocessHelper(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.go")
+	bin := filepath.Join(dir, "vialite-helper")
+	if err := os.WriteFile(src, []byte(subprocessHelperSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "build", "-o", bin, src)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build subprocess helper: %v\n%s", err, out)
+	}
+	return bin
+}
+
+const subprocessHelperSource = `package main
+
+import (
+	"encoding/json"
+	"net"
+	"os"
+)
+
+type nativeConfig struct {
+	Bind string ` + "`json:\"bind\"`" + `
+}
+
+func main() {
+	if marker := os.Getenv("VIALITE_HELPER_FAIL_ONCE"); marker != "" {
+		if _, err := os.Stat(marker); os.IsNotExist(err) {
+			_ = os.WriteFile(marker, []byte("1"), 0o644)
+			os.Exit(7)
+		}
+	}
+	cfgPath := ""
+	for i, arg := range os.Args {
+		if arg == "--config" && i+1 < len(os.Args) {
+			cfgPath = os.Args[i+1]
+			break
+		}
+	}
+	if cfgPath == "" {
+		os.Exit(2)
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		os.Exit(3)
+	}
+var cfg nativeConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		os.Exit(4)
+	}
+	ln, err := net.Listen("tcp", cfg.Bind)
+	if err != nil {
+		os.Exit(5)
+	}
+	if path := os.Getenv("VIALITE_HELPER_RESTARTED"); path != "" {
+		_ = os.WriteFile(path, []byte("1"), 0o644)
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}
+}
+`

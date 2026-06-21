@@ -1,6 +1,6 @@
 # Embedded Assets
 
-Native release assets can be placed here before building with
+Native assets can be placed here before building with
 `-tags vialite_embed`.
 
 Expected Linux asset names:
@@ -9,3 +9,6 @@ Expected Linux asset names:
 - `libvialite-linux-amd64.so`
 - `vialite-linux-arm64`
 - `libvialite-linux-arm64.so`
+
+GitHub Release auto-download currently publishes the shared-library assets.
+The subprocess binary names are only for explicit embedded builds.

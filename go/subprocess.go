@@ -59,10 +59,25 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 			return err
 		}
 		r.healthy.Store(true)
-		s.markReady(nil)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
 
-		err := r.waitProcess(ctx, cmd, s.opts.ShutdownTimeout)
-		r.healthy.Store(false)
+		err := waitBackendListeners(ctx, done, backends)
+		if err != nil {
+			r.healthy.Store(false)
+			if ctx.Err() != nil {
+				return nil
+			}
+			if cmd.ProcessState == nil {
+				_ = terminateProcess(cmd.Process)
+				<-done
+			}
+		} else {
+			s.markReady(nil)
+			err = r.waitProcess(ctx, cmd, done, s.opts.ShutdownTimeout)
+			r.healthy.Store(false)
+		}
+
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -82,10 +97,7 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 	}
 }
 
-func (r *subprocessRunner) waitProcess(ctx context.Context, cmd *exec.Cmd, shutdownTimeout time.Duration) error {
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
+func (r *subprocessRunner) waitProcess(ctx context.Context, cmd *exec.Cmd, done <-chan error, shutdownTimeout time.Duration) error {
 	select {
 	case err := <-done:
 		return err
@@ -107,6 +119,37 @@ func (r *subprocessRunner) waitProcess(ctx context.Context, cmd *exec.Cmd, shutd
 			return nil
 		}
 	}
+}
+
+func waitBackendListeners(ctx context.Context, done <-chan error, backends map[string]string) error {
+	deadline := time.After(10 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if allBackendsDialable(backends) {
+			return nil
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return errors.New("vialite: subprocess backend listener did not become ready")
+		case <-ticker.C:
+		}
+	}
+}
+
+func allBackendsDialable(backends map[string]string) bool {
+	for _, addr := range backends {
+		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+	}
+	return true
 }
 
 func (r *subprocessRunner) isHealthy() bool {
