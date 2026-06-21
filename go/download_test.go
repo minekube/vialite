@@ -18,11 +18,8 @@ func TestAssetFor(t *testing.T) {
 		goarch string
 		want   string
 	}{
-		{assetKindBinary, "linux", "amd64", "vialite-linux-amd64"},
-		{assetKindBinary, "linux", "arm64", "vialite-linux-arm64"},
 		{assetKindLibrary, "linux", "amd64", "libvialite-linux-amd64.so"},
 		{assetKindLibrary, "linux", "arm64", "libvialite-linux-arm64.so"},
-		{assetKindBinary, "windows", "amd64", "vialite-windows-amd64.exe"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
@@ -40,6 +37,9 @@ func TestAssetFor(t *testing.T) {
 func TestAssetForUnsupported(t *testing.T) {
 	if _, err := assetFor(assetKindLibrary, "darwin", "arm64"); err == nil {
 		t.Fatal("assetFor darwin library returned nil error")
+	}
+	if _, err := assetFor(assetKindBinary, "linux", "amd64"); err == nil {
+		t.Fatal("assetFor linux binary returned nil error")
 	}
 	if _, err := assetFor(assetKindBinary, "linux", "386"); err == nil {
 		t.Fatal("assetFor linux/386 returned nil error")
@@ -92,13 +92,13 @@ func TestDownloadAssetVerifiesChecksum(t *testing.T) {
 		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
 	})
 
-	const body = "native-binary"
-	sha := "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	const body = "native-library"
+	sha := "01307e18b53bf651632b9119874fdff0771bfe2f2dafc10af8a901b394842a70"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/checksums.txt"):
-			_, _ = w.Write([]byte(sha + "  vialite-linux-amd64\n"))
-		case strings.HasSuffix(r.URL.Path, "/vialite-linux-amd64"):
+			_, _ = w.Write([]byte(sha + "  libvialite-linux-amd64.so\n"))
+		case strings.HasSuffix(r.URL.Path, "/libvialite-linux-amd64.so"):
 			_, _ = w.Write([]byte(body))
 		default:
 			http.NotFound(w, r)
@@ -108,7 +108,7 @@ func TestDownloadAssetVerifiesChecksum(t *testing.T) {
 
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
-	path, err := downloadAsset(context.Background(), Options{Version: "v0.1.0", Mirror: srv.URL}, assetKindBinary)
+	path, err := downloadAsset(context.Background(), Options{Version: "v0.1.0", Mirror: srv.URL}, assetKindLibrary)
 	if err != nil {
 		t.Fatalf("downloadAsset: %v", err)
 	}

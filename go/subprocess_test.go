@@ -2,6 +2,7 @@ package vialite
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -51,6 +52,23 @@ func TestSubprocessRunnerStartsAndStops(t *testing.T) {
 		t.Fatalf("Start returned %v, want nil", err)
 	}
 	cancel()
+}
+
+func TestSubprocessBackendAddressIsDialableWhenBindUsesPortZero(t *testing.T) {
+	addr, err := loopbackBackendAddress("127.0.0.1:0", 0)
+	if err != nil {
+		t.Fatalf("loopbackBackendAddress: %v", err)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	if host != "127.0.0.1" {
+		t.Fatalf("host = %q, want 127.0.0.1", host)
+	}
+	if port == "0" {
+		t.Fatalf("port = %q, want allocated dialable port", port)
+	}
 }
 
 func TestSubprocessRunnerRestartsFailedProcess(t *testing.T) {

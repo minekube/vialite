@@ -107,19 +107,18 @@ func assetFor(kind assetKind, goos, goarch string) (string, error) {
 		return "", fmt.Errorf("vialite: auto-download supports amd64/arm64 only (got %s)", goarch)
 	}
 
+	if kind == assetKindBinary {
+		return "", fmt.Errorf("vialite: auto-download does not publish subprocess binaries (got %s/%s)", goos, goarch)
+	}
+
 	if goos == "windows" {
-		if kind == assetKindBinary && arch == "amd64" {
-			return "vialite-windows-amd64.exe", nil
-		}
-		return "", fmt.Errorf("vialite: auto-download supports windows/amd64 subprocess binaries only (got %s/%s)", goos, goarch)
+		return "", fmt.Errorf("vialite: auto-download supports linux shared libraries only (got %s/%s)", goos, goarch)
 	}
 	if goos != "linux" {
-		return "", fmt.Errorf("vialite: auto-download supports linux amd64/arm64 and windows amd64 subprocess binaries only (got %s/%s)", goos, goarch)
+		return "", fmt.Errorf("vialite: auto-download supports linux shared libraries only (got %s/%s)", goos, goarch)
 	}
 
 	switch kind {
-	case assetKindBinary:
-		return fmt.Sprintf("vialite-linux-%s", arch), nil
 	case assetKindLibrary:
 		return fmt.Sprintf("libvialite-linux-%s.so", arch), nil
 	default:

@@ -3,6 +3,8 @@ package vialite
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"sync"
@@ -23,7 +25,13 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 	if err != nil {
 		return err
 	}
-	config, err := s.opts.nativeConfigJSON()
+	opts := s.opts
+	bind, err := concreteLoopbackBind(opts.Bind)
+	if err != nil {
+		return err
+	}
+	opts.Bind = bind
+	config, err := opts.nativeConfigJSON()
 	if err != nil {
 		return err
 	}
@@ -33,10 +41,11 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 	}
 	defer func() { _ = os.Remove(configPath) }()
 
-	r.backends = make(map[string]string, len(s.opts.Backends))
-	for i, backend := range s.opts.Backends {
-		r.backends[backend.Name] = loopbackBackendAddress(s.opts.Bind, i)
+	backends, err := loopbackBackendAddresses(opts.Bind, opts.Backends)
+	if err != nil {
+		return err
 	}
+	r.backends = backends
 
 	backoff := s.opts.RestartPolicy.MinBackoff
 	for attempt := 0; ; attempt++ {
@@ -130,11 +139,42 @@ func writeTempConfig(data []byte) (string, error) {
 	return path, nil
 }
 
-func loopbackBackendAddress(bind string, index int) string {
-	if bind == "" || bind == "127.0.0.1:0" {
-		return "127.0.0.1:0"
+func loopbackBackendAddresses(bind string, backends []Backend) (map[string]string, error) {
+	addrs := make(map[string]string, len(backends))
+	for i, backend := range backends {
+		addr, err := loopbackBackendAddress(bind, i)
+		if err != nil {
+			return nil, fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
+		}
+		addrs[backend.Name] = addr
 	}
-	return bind
+	return addrs, nil
+}
+
+func concreteLoopbackBind(bind string) (string, error) {
+	if bind == "" {
+		bind = "127.0.0.1:0"
+	}
+	host, port, err := net.SplitHostPort(bind)
+	if err != nil {
+		return "", err
+	}
+	if port != "0" {
+		return bind, nil
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if err != nil {
+		return "", err
+	}
+	addr := ln.Addr().String()
+	return addr, ln.Close()
+}
+
+func loopbackBackendAddress(bind string, index int) (string, error) {
+	return concreteLoopbackBind(bind)
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

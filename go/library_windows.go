@@ -10,6 +10,8 @@ func loadNativeSymbols(path string) (*nativeSymbols, error) {
 		return nil, err
 	}
 	s := &nativeSymbols{}
+	purego.RegisterLibFunc(&s.createIsolate, lib, "graal_create_isolate")
+	purego.RegisterLibFunc(&s.tearDownIsolate, lib, "graal_tear_down_isolate")
 	purego.RegisterLibFunc(&s.init, lib, "vialite_init")
 	purego.RegisterLibFunc(&s.run, lib, "vialite_run")
 	purego.RegisterLibFunc(&s.shutdown, lib, "vialite_shutdown")

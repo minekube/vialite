@@ -20,7 +20,10 @@ Subprocess mode resolves `vialite` in this order:
 2. `$VIALITE_BINARY`
 3. embedded asset built with `-tags vialite_embed`
 4. `$PATH`
-5. GitHub Release auto-download
+
+GitHub Release auto-download currently publishes the shared library, not a
+standalone subprocess binary. Use embedded mode for auto-download, or set a
+local subprocess binary path explicitly.
 
 ## Backend Detection
 

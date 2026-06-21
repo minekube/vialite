@@ -45,6 +45,22 @@ func (r *embeddedRunner) run(ctx context.Context, s *Server) error {
 	s.markReady(nil)
 	defer r.healthy.Store(false)
 
+	return r.runNative(ctx, symbols, thread)
+}
+
+func (r *embeddedRunner) isHealthy() bool {
+	return r.healthy.Load()
+}
+
+func (r *embeddedRunner) backendAddress(name string) (string, error) {
+	addr, ok := r.backends[name]
+	if !ok {
+		return "", ErrBackendNotFound
+	}
+	return addr, nil
+}
+
+func (r *embeddedRunner) runNative(ctx context.Context, symbols *nativeSymbols, thread unsafe.Pointer) error {
 	done := make(chan error, 1)
 	go func() {
 		if code := symbols.run(thread); code != 0 {
@@ -59,18 +75,6 @@ func (r *embeddedRunner) run(ctx context.Context, s *Server) error {
 		return err
 	case <-ctx.Done():
 		_ = symbols.shutdown(thread)
-		return nil
+		return <-done
 	}
-}
-
-func (r *embeddedRunner) isHealthy() bool {
-	return r.healthy.Load()
-}
-
-func (r *embeddedRunner) backendAddress(name string) (string, error) {
-	addr, ok := r.backends[name]
-	if !ok {
-		return "", ErrBackendNotFound
-	}
-	return addr, nil
 }

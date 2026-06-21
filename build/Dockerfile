@@ -18,5 +18,5 @@ FROM build AS shared
 WORKDIR /out
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-RUN cp /src/build/.work/ViaProxy/vialite-native/build/native/nativeCompile/libvialite.so /out/libvialite-${TARGETOS}-${TARGETARCH}.so || true
-RUN cp /src/build/.work/ViaProxy/vialite-native/build/native/nativeCompile/libvialite.h /out/libvialite.h || true
+RUN cp /src/build/.work/ViaProxy/vialite-native/build/native/nativeCompile/libvialite.so /out/libvialite-${TARGETOS}-${TARGETARCH}.so
+RUN cp /src/build/.work/ViaProxy/vialite-native/build/native/nativeCompile/libvialite.h /out/libvialite.h
