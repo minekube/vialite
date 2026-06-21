@@ -39,7 +39,7 @@ repositories {
 
 dependencies {
     compileOnly("org.graalvm.sdk:nativeimage:25.0.3")
-    implementation(rootProject)
+    compileOnly(rootProject)
 }
 
 java {
@@ -61,7 +61,6 @@ graalvmNative {
             buildArgs.addAll(
                 "--no-fallback",
                 "--enable-url-protocols=http,https",
-                "--initialize-at-build-time=org.apache.logging.log4j,org.apache.logging.slf4j,org.slf4j",
                 "-H:Name=libvialite",
                 "-H:Features=com.minekube.vialite.bridge.VialiteBridgeFeature",
                 "-H:IncludeResources=^(assets/.+|mappings/.+|META-INF/services/.+|.+\\.json|.+\\.properties)$",
