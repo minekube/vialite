@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag to publish or repair. Empty uses the workflow ref.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Download latest native artifacts for release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          run_id="$(gh run list --workflow=native-image.yml --branch=main --status=success --limit=1 --json databaseId --jq '.[0].databaseId // ""')"
+          if [ -z "$run_id" ]; then
+            echo "::warning::No native-image artifacts found; publishing checksums for source-only release"
+            exit 0
+          fi
+          gh run download "$run_id" --dir artifacts --pattern 'vialite-native'
+
+      - name: Generate checksums
+        run: |
+          mkdir -p artifacts
+          ( cd artifacts
+            shopt -s globstar nullglob
+            for f in **/*; do
+              [ -f "$f" ] || continue
+              base="$(basename "$f")"
+              case "$base" in checksums.txt) continue;; esac
+              sha256sum "$f" | awk -v b="$base" '{ print $1 "  " b }'
+            done | sort -k2 > checksums.txt
+          )
+          cat artifacts/checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/**/*
