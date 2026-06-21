@@ -61,6 +61,7 @@ graalvmNative {
             buildArgs.addAll(
                 "--no-fallback",
                 "--enable-url-protocols=http,https",
+                "--initialize-at-build-time=org.apache.logging.log4j,org.slf4j",
                 "-H:Name=libvialite",
                 "-H:Features=com.minekube.vialite.bridge.VialiteBridgeFeature",
                 "-H:IncludeResources=^(assets/.+|mappings/.+|META-INF/services/.+|.+\\.json|.+\\.properties)$",
