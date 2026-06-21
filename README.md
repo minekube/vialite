@@ -35,7 +35,7 @@ not the first frontend compatibility layer for clients Gate cannot parse.
 ## What This Repo Provides
 
 | Component | Status |
-|---|---|
+| --- | --- |
 | Go module `go.minekube.com/vialite` | Lifecycle, artifact lookup, embedded/subprocess runners, backend dial address API |
 | Gate adapter `go.minekube.com/vialite/integration/gate` | Gate-shaped config and fakeable lifecycle wrapper |
 | Native build scaffold | ViaProxy soft-fork overlay and explicit C ABI contract |

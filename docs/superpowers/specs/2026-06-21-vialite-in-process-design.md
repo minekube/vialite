@@ -166,7 +166,7 @@ Gate owns authentication and player identity. `vialite` must preserve Gate's bac
 The first compatibility matrix is:
 
 | Gate forwarding mode | Expected behavior |
-|---|---|
+| --- | --- |
 | none | Vialite forwards normal offline-mode login data to backend. |
 | legacy | Vialite preserves null-delimited BungeeCord-style forwarding data in the handshake address. |
 | velocity | Vialite preserves login plugin message forwarding between Gate and backend. |

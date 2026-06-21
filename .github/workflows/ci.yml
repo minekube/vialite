@@ -43,10 +43,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: jdx/mise-action@v4
+      - uses: actions/setup-node@v6
         with:
-          cache: true
-          experimental: true
+          node-version: 24
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install lint tools
+        run: |
+          npm install -g markdownlint-cli2@0.22.1
+          python -m pip install yamllint==1.38.0
 
       - name: Lint markdown and YAML
         run: |

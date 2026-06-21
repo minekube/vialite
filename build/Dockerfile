@@ -4,7 +4,7 @@ FROM ${GRAALVM_IMAGE} AS build
 WORKDIR /src
 COPY . .
 
-RUN microdnf install -y git findutils tar gzip unzip which gcc glibc-devel zlib-devel && microdnf clean all
+RUN microdnf install -y git findutils tar gzip unzip which && microdnf clean all
 RUN bash build/apply-overlay.sh
 
 WORKDIR /src/build/.work/ViaProxy
