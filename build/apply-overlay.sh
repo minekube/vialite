@@ -18,7 +18,11 @@ git -C "$SRC" clean -fdx
 
 cp -R "$ROOT/build/overlay/." "$SRC/"
 
-settings="$SRC/settings.gradle.kts"
+settings="$SRC/settings.gradle"
+if [ ! -f "$settings" ]; then
+  settings="$SRC/settings.gradle.kts"
+fi
+
 if ! grep -q 'include(":vialite-native")' "$settings"; then
   printf '\ninclude(":vialite-native")\n' >> "$settings"
 fi

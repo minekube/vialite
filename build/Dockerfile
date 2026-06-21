@@ -8,7 +8,7 @@ RUN microdnf install -y git findutils tar gzip unzip which && microdnf clean all
 RUN bash build/apply-overlay.sh
 
 WORKDIR /src/build/.work/ViaProxy
-RUN ./gradlew :vialite-native:build --no-daemon
+RUN ./gradlew :vialite-native:nativeCompile --no-daemon
 
 FROM build AS shared
 WORKDIR /out

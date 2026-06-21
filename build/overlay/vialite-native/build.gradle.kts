@@ -4,10 +4,41 @@ plugins {
 }
 
 repositories {
+    maven {
+        name = "ViaVersion"
+        url = uri("https://repo.viaversion.com")
+        content {
+            includeGroupByRegex("com\\.viaversion(\\..+)?")
+            includeGroupByRegex("net\\.raphimc(\\..+)?")
+        }
+    }
+    maven {
+        name = "Lenni0451"
+        url = uri("https://maven.lenni0451.net/everything")
+        content {
+            includeGroupByRegex("net\\.lenni0451(\\..+)?")
+            includeGroupByRegex("net\\.raphimc(\\..+)?")
+        }
+    }
+    maven {
+        name = "Minecraft Libraries"
+        url = uri("https://libraries.minecraft.net")
+        content {
+            includeGroup("com.mojang")
+        }
+    }
+    maven {
+        name = "Jitpack"
+        url = uri("https://jitpack.io")
+        content {
+            includeGroupByRegex("com\\.github\\..+")
+        }
+    }
     mavenCentral()
 }
 
 dependencies {
+    compileOnly("org.graalvm.sdk:nativeimage:25.0.3")
     implementation(rootProject)
 }
 
