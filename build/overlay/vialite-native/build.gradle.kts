@@ -50,6 +50,9 @@ java {
 
 graalvmNative {
     toolchainDetection.set(false)
+    metadataRepository {
+        enabled.set(false)
+    }
     binaries {
         named("main") {
             imageName.set("vialite")
