@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p artifacts
+          mkdir -p artifact-downloads artifacts
 
           NATIVE_SHA=$(git log -n 1 --format=%H -- \
             build \
@@ -46,35 +46,50 @@ jobs:
           RUN_ID=""
           RUN_URL=""
           for _ in $(seq 1 240); do
-            RUN_JSON=$(gh run list \
+            RUNS_JSON=$(gh run list \
               --repo "$GITHUB_REPOSITORY" \
               --workflow=native-image.yml \
               --branch=main \
               --limit=100 \
-              --json databaseId,headSha,status,conclusion,url,createdAt \
-              --jq "map(select(.headSha == \"$NATIVE_SHA\")) | sort_by(.createdAt) | reverse | .[0] // {}")
+              --json databaseId,headSha,status,conclusion,url,createdAt)
+
+            RUN_JSON=$(echo "$RUNS_JSON" | jq -c --arg sha "$NATIVE_SHA" \
+              'map(select(.headSha == $sha and .status == "completed" and .conclusion == "success")) | sort_by(.createdAt) | reverse | .[0] // {}')
 
             RUN_ID=$(echo "$RUN_JSON" | jq -r '.databaseId // ""')
             STATUS=$(echo "$RUN_JSON" | jq -r '.status // ""')
             CONCLUSION=$(echo "$RUN_JSON" | jq -r '.conclusion // ""')
             RUN_URL=$(echo "$RUN_JSON" | jq -r '.url // ""')
 
-            if [ -z "$RUN_ID" ]; then
+            if [ -n "$RUN_ID" ]; then
+              echo "native-image.yml run $RUN_ID is $STATUS/$CONCLUSION: $RUN_URL"
+              break
+            fi
+
+            PENDING_JSON=$(echo "$RUNS_JSON" | jq -c --arg sha "$NATIVE_SHA" \
+              'map(select(.headSha == $sha and .status != "completed")) | sort_by(.createdAt) | reverse | .[0] // {}')
+            PENDING_ID=$(echo "$PENDING_JSON" | jq -r '.databaseId // ""')
+            if [ -n "$PENDING_ID" ]; then
+              PENDING_STATUS=$(echo "$PENDING_JSON" | jq -r '.status // ""')
+              PENDING_URL=$(echo "$PENDING_JSON" | jq -r '.url // ""')
+              echo "native-image.yml run $PENDING_ID is $PENDING_STATUS: $PENDING_URL"
+              sleep 10
+              continue
+            fi
+
+            LATEST_JSON=$(echo "$RUNS_JSON" | jq -c --arg sha "$NATIVE_SHA" \
+              'map(select(.headSha == $sha)) | sort_by(.createdAt) | reverse | .[0] // {}')
+            LATEST_ID=$(echo "$LATEST_JSON" | jq -r '.databaseId // ""')
+            if [ -z "$LATEST_ID" ]; then
               echo "No native-image.yml run for $NATIVE_SHA yet; waiting..."
               sleep 10
               continue
             fi
 
-            echo "native-image.yml run $RUN_ID is $STATUS/$CONCLUSION: $RUN_URL"
-            if [ "$STATUS" = "completed" ]; then
-              if [ "$CONCLUSION" = "success" ]; then
-                break
-              fi
-              echo "::error::native-image.yml run $RUN_ID concluded $CONCLUSION"
-              exit 1
-            fi
-
-            sleep 10
+            LATEST_CONCLUSION=$(echo "$LATEST_JSON" | jq -r '.conclusion // ""')
+            LATEST_URL=$(echo "$LATEST_JSON" | jq -r '.url // ""')
+            echo "::error::native-image.yml run $LATEST_ID concluded $LATEST_CONCLUSION and no successful run exists for $NATIVE_SHA: $LATEST_URL"
+            exit 1
           done
 
           if [ -z "$RUN_ID" ] || [ "$STATUS" != "completed" ] || [ "$CONCLUSION" != "success" ]; then
@@ -82,14 +97,28 @@ jobs:
             exit 1
           fi
 
-          gh run download "$RUN_ID" --dir artifacts --pattern 'vialite-*'
+          gh run download "$RUN_ID" --dir artifact-downloads --pattern 'vialite-*'
+          cp artifact-downloads/vialite-linux-amd64/libvialite-linux-amd64.so artifacts/
+          cp artifact-downloads/vialite-linux-amd64/vialite-linux-amd64 artifacts/
+          cp artifact-downloads/vialite-linux-arm64/libvialite-linux-arm64.so artifacts/
+          cp artifact-downloads/vialite-linux-arm64/vialite-linux-arm64 artifacts/
+          cp artifact-downloads/vialite-windows-amd64/vialite-windows-amd64.exe artifacts/
+
+          if ! cmp -s \
+            artifact-downloads/vialite-linux-amd64/libvialite.h \
+            artifact-downloads/vialite-linux-arm64/libvialite.h; then
+            echo "::error::Linux amd64 and arm64 libvialite.h artifacts differ"
+            exit 1
+          fi
+          cp artifact-downloads/vialite-linux-amd64/libvialite.h artifacts/
+
           ls -la artifacts/
 
       - name: Generate checksums
         run: |
           ( cd artifacts
-            shopt -s globstar nullglob
-            for f in **/*; do
+            shopt -s nullglob
+            for f in *; do
               [ -f "$f" ] || continue
               base="$(basename "$f")"
               case "$base" in *.sig|*.attest.spdx.json|checksums.txt) continue;; esac
@@ -104,4 +133,4 @@ jobs:
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           generate_release_notes: true
-          files: artifacts/**/*
+          files: artifacts/*
