@@ -55,17 +55,20 @@ public final class VialiteBridge {
             System.err.println("Usage: vialite --config <config.json>");
             System.exit(2);
         }
-        int code = init(null, CTypeConversion.toCString(GSON.toJson(config)).get());
+        int code = initConfig(GSON.toJson(config));
         if (code != 0) {
             System.exit(code);
         }
-        System.exit(run(null));
+        System.exit(runLoop());
     }
 
     @CEntryPoint(name = "vialite_init")
     public static synchronized int init(IsolateThread thread, CCharPointer configJson) {
+        return initConfig(CTypeConversion.toJavaString(configJson));
+    }
+
+    private static synchronized int initConfig(String config) {
         try {
-            String config = CTypeConversion.toJavaString(configJson);
             NativeConfig nativeConfig = GSON.fromJson(config, NativeConfig.class);
             if (nativeConfig == null || nativeConfig.backends == null || nativeConfig.backends.isEmpty()) {
                 return 3;
@@ -106,6 +109,10 @@ public final class VialiteBridge {
 
     @CEntryPoint(name = "vialite_run")
     public static int run(IsolateThread thread) {
+        return runLoop();
+    }
+
+    private static int runLoop() {
         if (!INITIALIZED.get()) {
             return 2;
         }
