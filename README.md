@@ -39,7 +39,7 @@ not the first frontend compatibility layer for clients Gate cannot parse.
 | Go module `go.minekube.com/vialite` | Lifecycle, readiness, artifact lookup, embedded/subprocess runners, backend dial address API |
 | Gate adapter `go.minekube.com/vialite/integration/gate` | Gate-shaped config and fakeable lifecycle wrapper |
 | Native build scaffold | ViaProxy soft-fork overlay and isolate-thread-aware C ABI contract |
-| Release/update loop | CI, release-please, Renovate, checksummed GitHub Release assets |
+| Release/update loop | CI, release-please, Renovate, checksummed Linux amd64/arm64 libraries and subprocess binaries, plus Windows amd64 subprocess binary |
 
 The current native artifact is an ABI/build scaffold. It proves the
 GraalVM shared-library shape and Go loading path, but full Via runtime
