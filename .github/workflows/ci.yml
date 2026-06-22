@@ -38,6 +38,22 @@ jobs:
         working-directory: go
         run: go test ./...
 
+  java-overlay-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Test ViaProxy overlay
+        run: |
+          bash build/apply-overlay.sh
+          cd build/.work/ViaProxy
+          ./gradlew :vialite-native:test --no-daemon --no-configuration-cache
+
   docs-lint:
     runs-on: ubuntu-latest
     steps:

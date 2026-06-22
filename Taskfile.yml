@@ -20,8 +20,18 @@ tasks:
     cmds:
       - go test ./...
 
+  test:java-overlay:
+    desc: run Java tests for the ViaProxy overlay
+    cmds:
+      - bash build/apply-overlay.sh
+      - cd build/.work/ViaProxy && ./gradlew :vialite-native:test --no-daemon --no-configuration-cache
+
   test:
     desc: run all tests
+    deps: [test:go, test:java-overlay]
+
+  test:quick:
+    desc: run quick tests that do not clone/apply the ViaProxy overlay
     deps: [test:go]
 
   lint:go:

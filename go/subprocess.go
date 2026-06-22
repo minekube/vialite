@@ -266,18 +266,6 @@ func writeTempConfig(data []byte) (string, error) {
 	return path, nil
 }
 
-func loopbackBackendAddresses(bind string, backends []Backend) (map[string]string, error) {
-	addrs := make(map[string]string, len(backends))
-	for i, backend := range backends {
-		addr, err := loopbackBackendAddress(bind, i)
-		if err != nil {
-			return nil, fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
-		}
-		addrs[backend.Name] = addr
-	}
-	return addrs, nil
-}
-
 func concreteLoopbackBind(bind string) (string, error) {
 	if bind == "" {
 		bind = "127.0.0.1:0"
