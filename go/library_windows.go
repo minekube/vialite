@@ -2,13 +2,18 @@
 
 package vialite
 
-import "github.com/ebitengine/purego"
+import (
+	"syscall"
+
+	"github.com/ebitengine/purego"
+)
 
 func loadNativeSymbols(path string) (*nativeSymbols, error) {
-	lib, err := purego.Dlopen(path, purego.RTLD_NOW)
+	handle, err := syscall.LoadLibrary(path)
 	if err != nil {
 		return nil, err
 	}
+	lib := uintptr(handle)
 	s := &nativeSymbols{}
 	purego.RegisterLibFunc(&s.createIsolate, lib, "graal_create_isolate")
 	purego.RegisterLibFunc(&s.tearDownIsolate, lib, "graal_tear_down_isolate")
