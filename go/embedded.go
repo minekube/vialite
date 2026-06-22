@@ -33,13 +33,13 @@ func (r *embeddedRunner) run(ctx context.Context, s *Server) error {
 	if code := symbols.init(thread, string(config)); code != 0 {
 		return nativeExitError{op: "init", code: code}
 	}
-	r.backends = make(map[string]string, len(s.opts.Backends))
+	r.backends = make(map[string]string, len(s.opts.Backends)*2)
 	for _, backend := range s.opts.Backends {
 		addr := symbols.backendAddress(thread, backend.Name)
 		if addr == "" {
 			return ErrBackendNotFound
 		}
-		r.backends[backend.Name] = addr
+		storeBackendAddress(r.backends, backend.Name, addr)
 	}
 	r.healthy.Store(true)
 	s.markReady(nil)
@@ -54,6 +54,9 @@ func (r *embeddedRunner) isHealthy() bool {
 
 func (r *embeddedRunner) backendAddress(name string) (string, error) {
 	addr, ok := r.backends[name]
+	if !ok {
+		addr, ok = r.backends[backendLookupName(name)]
+	}
 	if !ok {
 		return "", ErrBackendNotFound
 	}

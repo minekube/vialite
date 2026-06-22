@@ -26,12 +26,11 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 		return err
 	}
 	opts := s.opts
-	bind, err := concreteLoopbackBind(opts.Bind)
+	backends, err := loopbackBackendAddresses(opts.Bind, opts.Backends)
 	if err != nil {
 		return err
 	}
-	opts.Bind = bind
-	config, err := opts.nativeConfigJSON()
+	config, err := opts.nativeConfigJSONWithBackendBinds(backends)
 	if err != nil {
 		return err
 	}
@@ -41,10 +40,6 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 	}
 	defer func() { _ = os.Remove(configPath) }()
 
-	backends, err := loopbackBackendAddresses(opts.Bind, opts.Backends)
-	if err != nil {
-		return err
-	}
 	r.backends = backends
 
 	backoff := s.opts.RestartPolicy.MinBackoff
@@ -159,6 +154,9 @@ func (r *subprocessRunner) isHealthy() bool {
 func (r *subprocessRunner) backendAddress(name string) (string, error) {
 	addr, ok := r.backends[name]
 	if !ok {
+		addr, ok = r.backends[backendLookupName(name)]
+	}
+	if !ok {
 		return "", ErrBackendNotFound
 	}
 	return addr, nil
@@ -183,15 +181,32 @@ func writeTempConfig(data []byte) (string, error) {
 }
 
 func loopbackBackendAddresses(bind string, backends []Backend) (map[string]string, error) {
-	addrs := make(map[string]string, len(backends))
+	if bind == "" {
+		bind = "127.0.0.1:0"
+	}
+	if len(backends) > 1 {
+		_, port, err := net.SplitHostPort(bind)
+		if err != nil {
+			return nil, err
+		}
+		if port != "0" {
+			return nil, fmt.Errorf("vialite: subprocess bind %s cannot be shared by %d backends", bind, len(backends))
+		}
+	}
+	addrs := make(map[string]string, len(backends)*2)
 	for i, backend := range backends {
 		addr, err := loopbackBackendAddress(bind, i)
 		if err != nil {
 			return nil, fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
 		}
-		addrs[backend.Name] = addr
+		storeBackendAddress(addrs, backend.Name, addr)
 	}
 	return addrs, nil
+}
+
+func storeBackendAddress(addrs map[string]string, name string, addr string) {
+	addrs[name] = addr
+	addrs[backendLookupName(name)] = addr
 }
 
 func concreteLoopbackBind(bind string) (string, error) {

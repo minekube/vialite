@@ -52,20 +52,79 @@ func TestSubprocessRunnerStartsAndStops(t *testing.T) {
 	cancel()
 }
 
+func TestSubprocessRunnerPublishesDistinctAddressesForMultipleBackends(t *testing.T) {
+	bin := buildSubprocessHelper(t)
+
+	opts, err := Options{
+		Mode:       ModeSubprocess,
+		BinaryPath: bin,
+		Backends: []Backend{
+			{Name: "old", Address: "127.0.0.1:25566"},
+			{Name: "new", Address: "127.0.0.1:25567"},
+		},
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	if err := srv.WaitReady(context.Background()); err != nil {
+		cancel()
+		t.Fatalf("WaitReady: %v", err)
+	}
+	oldAddr, err := srv.BackendDialAddress("old")
+	if err != nil {
+		cancel()
+		t.Fatalf("BackendDialAddress old: %v", err)
+	}
+	newAddr, err := srv.BackendDialAddress("new")
+	if err != nil {
+		cancel()
+		t.Fatalf("BackendDialAddress new: %v", err)
+	}
+	if oldAddr == newAddr {
+		cancel()
+		t.Fatalf("multiple backends share one subprocess listener: old=%s new=%s", oldAddr, newAddr)
+	}
+	if err := srv.Stop(context.Background()); err != nil {
+		cancel()
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Start returned %v, want nil", err)
+	}
+	cancel()
+}
+
 func TestSubprocessBackendAddressIsDialableWhenBindUsesPortZero(t *testing.T) {
-	addr, err := loopbackBackendAddress("127.0.0.1:0", 0)
+	addrs, err := loopbackBackendAddresses("127.0.0.1:0", []Backend{
+		{Name: "old", Address: "127.0.0.1:25566"},
+		{Name: "new", Address: "127.0.0.1:25567"},
+	})
 	if err != nil {
-		t.Fatalf("loopbackBackendAddress: %v", err)
+		t.Fatalf("loopbackBackendAddresses: %v", err)
 	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		t.Fatalf("SplitHostPort: %v", err)
+	if addrs["old"] == "" || addrs["new"] == "" {
+		t.Fatalf("missing backend addresses: %#v", addrs)
 	}
-	if host != "127.0.0.1" {
-		t.Fatalf("host = %q, want 127.0.0.1", host)
+	if addrs["old"] == addrs["new"] {
+		t.Fatalf("backend addresses reused one listener: %#v", addrs)
 	}
-	if port == "0" {
-		t.Fatalf("port = %q, want allocated dialable port", port)
+	for name, addr := range addrs {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			t.Fatalf("%s SplitHostPort: %v", name, err)
+		}
+		if host != "127.0.0.1" {
+			t.Fatalf("%s host = %q, want 127.0.0.1", name, host)
+		}
+		if port == "0" {
+			t.Fatalf("%s port = %q, want allocated dialable port", name, port)
+		}
 	}
 }
 
@@ -150,6 +209,11 @@ import (
 
 type nativeConfig struct {
 	Bind string ` + "`json:\"bind\"`" + `
+	Backends []nativeBackend ` + "`json:\"backends\"`" + `
+}
+
+type nativeBackend struct {
+	Bind string ` + "`json:\"bind\"`" + `
 }
 
 func main() {
@@ -177,19 +241,36 @@ var cfg nativeConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		os.Exit(4)
 	}
-	ln, err := net.Listen("tcp", cfg.Bind)
-	if err != nil {
+	binds := []string{cfg.Bind}
+	if len(cfg.Backends) > 0 {
+		binds = binds[:0]
+		for _, backend := range cfg.Backends {
+			if backend.Bind != "" {
+				binds = append(binds, backend.Bind)
+			}
+		}
+	}
+	if len(binds) == 0 {
 		os.Exit(5)
+	}
+	for _, bind := range binds {
+		ln, err := net.Listen("tcp", bind)
+		if err != nil {
+			os.Exit(5)
+		}
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				_ = conn.Close()
+			}
+		}()
 	}
 	if path := os.Getenv("VIALITE_HELPER_RESTARTED"); path != "" {
 		_ = os.WriteFile(path, []byte("1"), 0o644)
 	}
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		_ = conn.Close()
-	}
+	select {}
 }
 `

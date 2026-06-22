@@ -40,6 +40,9 @@ repositories {
 dependencies {
     compileOnly("org.graalvm.sdk:nativeimage:25.0.3")
     compileOnly(rootProject)
+    runtimeOnly(project(":")) {
+        isTransitive = false
+    }
 }
 
 java {
@@ -67,6 +70,7 @@ graalvmNative {
                 "--enable-url-protocols=http,https",
                 "-H:Features=com.minekube.vialite.bridge.VialiteBridgeFeature",
                 "-H:IncludeResources=^(assets/.+|mappings/.+|META-INF/services/.+|.+\\.json|.+\\.properties)$",
+                "--initialize-at-run-time=net.raphimc.viaproxy,io.netty,org.apache.logging,org.slf4j",
                 "-H:+UnlockExperimentalVMOptions",
                 "-O2"
             )

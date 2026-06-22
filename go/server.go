@@ -157,6 +157,12 @@ func (s *Server) BackendDialAddress(name string) (string, error) {
 	}
 	addr, err := s.runner.backendAddress(name)
 	if errors.Is(err, ErrBackendNotFound) {
+		normalized := backendLookupName(name)
+		if normalized != name {
+			addr, err = s.runner.backendAddress(normalized)
+		}
+	}
+	if errors.Is(err, ErrBackendNotFound) {
 		return "", err
 	}
 	if err != nil {
