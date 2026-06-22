@@ -107,18 +107,19 @@ func assetFor(kind assetKind, goos, goarch string) (string, error) {
 		return "", fmt.Errorf("vialite: auto-download supports amd64/arm64 only (got %s)", goarch)
 	}
 
-	if kind == assetKindBinary {
-		return "", fmt.Errorf("vialite: auto-download does not publish subprocess binaries (got %s/%s)", goos, goarch)
-	}
-
 	if goos == "windows" {
-		return "", fmt.Errorf("vialite: auto-download supports linux shared libraries only (got %s/%s)", goos, goarch)
+		if kind == assetKindBinary && arch == "amd64" {
+			return "vialite-windows-amd64.exe", nil
+		}
+		return "", fmt.Errorf("vialite: auto-download supports windows/amd64 subprocess binaries only (got %s/%s); set BinaryPath/LibraryPath manually", goos, goarch)
 	}
 	if goos != "linux" {
-		return "", fmt.Errorf("vialite: auto-download supports linux shared libraries only (got %s/%s)", goos, goarch)
+		return "", fmt.Errorf("vialite: auto-download supports linux amd64/arm64 and windows amd64 subprocess binaries only (got %s/%s); set BinaryPath/LibraryPath manually", goos, goarch)
 	}
 
 	switch kind {
+	case assetKindBinary:
+		return fmt.Sprintf("vialite-linux-%s", arch), nil
 	case assetKindLibrary:
 		return fmt.Sprintf("libvialite-linux-%s.so", arch), nil
 	default:
@@ -132,7 +133,7 @@ func fetchExpectedSha(ctx context.Context, base, version, assetName string) (str
 	if err != nil {
 		return "", fmt.Errorf("vialite: fetch checksums for %s: %w", version, err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(body, 1<<20))
 	if err != nil {
 		return "", err
@@ -167,7 +168,7 @@ func downloadFile(ctx context.Context, url, dest string) error {
 	if err != nil {
 		return fmt.Errorf("vialite: get %s: %w", url, err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
@@ -201,7 +202,7 @@ func shaFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return streamSha(f)
 }
 

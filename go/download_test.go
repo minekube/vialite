@@ -13,16 +13,20 @@ import (
 
 func TestAssetFor(t *testing.T) {
 	tests := []struct {
+		name   string
 		kind   assetKind
 		goos   string
 		goarch string
 		want   string
 	}{
-		{assetKindLibrary, "linux", "amd64", "libvialite-linux-amd64.so"},
-		{assetKindLibrary, "linux", "arm64", "libvialite-linux-arm64.so"},
+		{"linux amd64 library", assetKindLibrary, "linux", "amd64", "libvialite-linux-amd64.so"},
+		{"linux arm64 library", assetKindLibrary, "linux", "arm64", "libvialite-linux-arm64.so"},
+		{"linux amd64 binary", assetKindBinary, "linux", "amd64", "vialite-linux-amd64"},
+		{"linux arm64 binary", assetKindBinary, "linux", "arm64", "vialite-linux-arm64"},
+		{"windows amd64 binary", assetKindBinary, "windows", "amd64", "vialite-windows-amd64.exe"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			got, err := assetFor(tt.kind, tt.goos, tt.goarch)
 			if err != nil {
 				t.Fatalf("assetFor returned error: %v", err)
@@ -35,14 +39,24 @@ func TestAssetFor(t *testing.T) {
 }
 
 func TestAssetForUnsupported(t *testing.T) {
-	if _, err := assetFor(assetKindLibrary, "darwin", "arm64"); err == nil {
-		t.Fatal("assetFor darwin library returned nil error")
+	tests := []struct {
+		name   string
+		kind   assetKind
+		goos   string
+		goarch string
+	}{
+		{"darwin library", assetKindLibrary, "darwin", "arm64"},
+		{"darwin binary", assetKindBinary, "darwin", "arm64"},
+		{"windows library", assetKindLibrary, "windows", "amd64"},
+		{"windows arm64 binary", assetKindBinary, "windows", "arm64"},
+		{"linux 386 binary", assetKindBinary, "linux", "386"},
 	}
-	if _, err := assetFor(assetKindBinary, "linux", "amd64"); err == nil {
-		t.Fatal("assetFor linux binary returned nil error")
-	}
-	if _, err := assetFor(assetKindBinary, "linux", "386"); err == nil {
-		t.Fatal("assetFor linux/386 returned nil error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := assetFor(tt.kind, tt.goos, tt.goarch); err == nil {
+				t.Fatalf("assetFor(%v, %q, %q) returned nil error", tt.kind, tt.goos, tt.goarch)
+			}
+		})
 	}
 }
 
@@ -155,5 +169,46 @@ func TestDownloadAssetLibraryUsesPlatformNamedReleaseAsset(t *testing.T) {
 	}
 	if filepath.Base(path) != "libvialite-linux-amd64.so" {
 		t.Fatalf("downloaded path base = %q", filepath.Base(path))
+	}
+}
+
+func TestDownloadAssetBinaryUsesPlatformNamedReleaseAsset(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-binary"
+	sha := "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/checksums.txt"):
+			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
+		case strings.HasSuffix(r.URL.Path, "/vialite-linux-arm64"):
+			_, _ = w.Write([]byte(body))
+		case strings.HasSuffix(r.URL.Path, "/vialite"):
+			t.Fatalf("download used unqualified vialite release asset")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	path, err := downloadAsset(context.Background(), Options{Version: "v0.1.0", Mirror: srv.URL}, assetKindBinary)
+	if err != nil {
+		t.Fatalf("downloadAsset binary: %v", err)
+	}
+	if filepath.Base(path) != "vialite-linux-arm64" {
+		t.Fatalf("downloaded path base = %q", filepath.Base(path))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat downloaded binary: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("downloaded binary mode = %v, want executable bit", info.Mode())
 	}
 }

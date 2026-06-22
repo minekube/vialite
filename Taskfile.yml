@@ -33,7 +33,7 @@ tasks:
   lint:md:
     desc: run markdown lint
     cmds:
-      - markdownlint-cli2 '**/*.md' '#build/.work/**'
+      - markdownlint-cli2 '**/*.md' '#.cache/**' '#build/.work/**'
 
   lint:yaml:
     desc: run YAML lint

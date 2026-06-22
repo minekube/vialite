@@ -1,3 +1,5 @@
+//go:build vialite_embed && linux && (amd64 || arm64)
+
 package vialite
 
 import (
