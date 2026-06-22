@@ -16,8 +16,17 @@ type subprocessRunner struct {
 	healthy  atomic.Bool
 	backends map[string]string
 
-	mu  sync.Mutex
-	cmd *exec.Cmd
+	mu       sync.Mutex
+	children map[string]*subprocessChild
+}
+
+type subprocessChild struct {
+	name       string
+	addr       string
+	configPath string
+	cmd        *exec.Cmd
+	done       chan struct{}
+	err        error
 }
 
 func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
@@ -26,58 +35,38 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 		return err
 	}
 	opts := s.opts
-	bind, err := concreteLoopbackBind(opts.Bind)
-	if err != nil {
+	if err := validateSubprocessBind(opts.Bind, len(opts.Backends)); err != nil {
 		return err
 	}
-	opts.Bind = bind
-	config, err := opts.nativeConfigJSON()
-	if err != nil {
-		return err
-	}
-	configPath, err := writeTempConfig(config)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(configPath) }()
-
-	backends, err := loopbackBackendAddresses(opts.Bind, opts.Backends)
-	if err != nil {
-		return err
-	}
-	r.backends = backends
-
 	backoff := s.opts.RestartPolicy.MinBackoff
 	for attempt := 0; ; attempt++ {
-		cmd := exec.Command(bin, "--config", configPath)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		r.mu.Lock()
-		r.cmd = cmd
-		r.mu.Unlock()
-		if err := cmd.Start(); err != nil {
+		children, backends, err := r.startChildren(ctx, bin, opts)
+		if err != nil {
 			return err
 		}
+		r.mu.Lock()
+		r.children = children
+		r.backends = backends
+		r.mu.Unlock()
 		r.healthy.Store(true)
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
 
-		err := waitBackendListeners(ctx, done, backends)
+		err = waitChildListeners(ctx, children)
 		if err != nil {
 			r.healthy.Store(false)
+			stopChildren(children, s.opts.ShutdownTimeout)
 			if ctx.Err() != nil {
 				return nil
 			}
-			if cmd.ProcessState == nil {
-				_ = terminateProcess(cmd.Process)
-				<-done
-			}
 		} else {
 			s.markReady(nil)
-			err = r.waitProcess(ctx, cmd, done, s.opts.ShutdownTimeout)
+			err = waitAnyChildExit(ctx, children)
 			r.healthy.Store(false)
+			stopChildren(children, s.opts.ShutdownTimeout)
 		}
 
+		r.mu.Lock()
+		r.children = nil
+		r.mu.Unlock()
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -97,27 +86,122 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 	}
 }
 
-func (r *subprocessRunner) waitProcess(ctx context.Context, cmd *exec.Cmd, done <-chan error, shutdownTimeout time.Duration) error {
+func validateSubprocessBind(bind string, backendCount int) error {
+	if backendCount <= 1 {
+		return nil
+	}
+	_, port, err := net.SplitHostPort(bind)
+	if err != nil {
+		return err
+	}
+	if port != "0" {
+		return fmt.Errorf("vialite: subprocess bind %s cannot be shared by %d backends; use port 0", bind, backendCount)
+	}
+	return nil
+}
+
+func (r *subprocessRunner) startChildren(ctx context.Context, bin string, opts Options) (map[string]*subprocessChild, map[string]string, error) {
+	children := make(map[string]*subprocessChild, len(opts.Backends))
+	backends := make(map[string]string, len(opts.Backends))
+	for i, backend := range opts.Backends {
+		addr, err := loopbackBackendAddress(opts.Bind, i)
+		if err != nil {
+			stopChildren(children, opts.ShutdownTimeout)
+			return nil, nil, fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
+		}
+		config, err := opts.nativeConfigJSONForBackend(backend, addr)
+		if err != nil {
+			stopChildren(children, opts.ShutdownTimeout)
+			return nil, nil, err
+		}
+		configPath, err := writeTempConfig(config)
+		if err != nil {
+			stopChildren(children, opts.ShutdownTimeout)
+			return nil, nil, err
+		}
+		cmd := exec.CommandContext(ctx, bin, "--config", configPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		child := &subprocessChild{
+			name:       backend.Name,
+			addr:       addr,
+			configPath: configPath,
+			cmd:        cmd,
+			done:       make(chan struct{}),
+		}
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(configPath)
+			stopChildren(children, opts.ShutdownTimeout)
+			return nil, nil, err
+		}
+		go func() {
+			child.err = cmd.Wait()
+			close(child.done)
+		}()
+		children[backend.Name] = child
+		backends[backend.Name] = addr
+	}
+	return children, backends, nil
+}
+
+func waitChildListeners(ctx context.Context, children map[string]*subprocessChild) error {
+	backends := make(map[string]string, len(children))
+	done := make(chan error, len(children))
+	for name, child := range children {
+		backends[name] = child.addr
+		go func(c *subprocessChild) {
+			<-c.done
+			if c.err != nil {
+				done <- fmt.Errorf("vialite: subprocess backend %s exited: %w", c.name, c.err)
+				return
+			}
+			done <- fmt.Errorf("vialite: subprocess backend %s exited", c.name)
+		}(child)
+	}
+	return waitBackendListeners(ctx, done, backends)
+}
+
+func waitAnyChildExit(ctx context.Context, children map[string]*subprocessChild) error {
+	done := make(chan error, len(children))
+	for _, child := range children {
+		go func(c *subprocessChild) {
+			<-c.done
+			if c.err != nil {
+				done <- fmt.Errorf("vialite: subprocess backend %s exited: %w", c.name, c.err)
+				return
+			}
+			done <- fmt.Errorf("vialite: subprocess backend %s exited", c.name)
+		}(child)
+	}
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		if err := terminateProcess(cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return err
+		return nil
+	}
+}
+
+func stopChildren(children map[string]*subprocessChild, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for _, child := range children {
+		if child.cmd != nil && child.cmd.Process != nil && child.cmd.ProcessState == nil {
+			_ = terminateProcess(child.cmd.Process)
 		}
+	}
+	for _, child := range children {
 		select {
-		case err := <-done:
-			if ctx.Err() != nil {
-				return nil
+		case <-child.done:
+		case <-ctx.Done():
+			if child.cmd != nil && child.cmd.Process != nil {
+				_ = child.cmd.Process.Kill()
 			}
-			return err
-		case <-time.After(shutdownTimeout):
-			if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				return err
+			select {
+			case <-child.done:
+			case <-time.After(time.Second):
 			}
-			<-done
-			return nil
 		}
+		_ = os.Remove(child.configPath)
 	}
 }
 

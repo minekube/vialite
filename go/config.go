@@ -33,3 +33,18 @@ func (o Options) nativeConfigJSON() ([]byte, error) {
 	}
 	return json.Marshal(cfg)
 }
+
+func (o Options) nativeConfigJSONForBackend(backend Backend, bind string) ([]byte, error) {
+	cfg := nativeConfig{
+		Bind:         bind,
+		GateProtocol: o.GateProtocol,
+		Backends: []nativeBackendConfig{{
+			Name:       backend.Name,
+			Address:    backend.Address,
+			Version:    backend.Version,
+			Detect:     backend.Detect,
+			Forwarding: string(backend.Forwarding),
+		}},
+	}
+	return json.Marshal(cfg)
+}
