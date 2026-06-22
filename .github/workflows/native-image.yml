@@ -17,8 +17,16 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
 
@@ -26,31 +34,81 @@ jobs:
         id: pins
         run: echo "graalvm=$(tr -d '[:space:]' < build/graalvm.version)" >> "$GITHUB_OUTPUT"
 
-      - name: Build shared library image target
+      - name: Build Linux native artifacts
         run: |
           docker build \
             -f build/Dockerfile \
             --build-arg GRAALVM_IMAGE="${{ steps.pins.outputs.graalvm }}" \
             --build-arg TARGETOS=linux \
-            --build-arg TARGETARCH=amd64 \
+            --build-arg TARGETARCH=${{ matrix.arch }} \
             --target shared \
-            -t ghcr.io/minekube/vialite:native-ci \
+            -t ghcr.io/minekube/vialite:native-ci-${{ matrix.arch }} \
             .
 
-      - name: Extract artifacts
+      - name: Extract Linux artifacts
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p artifacts
-          id="$(docker create ghcr.io/minekube/vialite:native-ci)"
+          id="$(docker create ghcr.io/minekube/vialite:native-ci-${{ matrix.arch }})"
           docker cp "$id:/out/." artifacts/
           docker rm "$id"
           ls -la artifacts
-          test -f artifacts/libvialite-linux-amd64.so
+          test -f artifacts/libvialite-linux-${{ matrix.arch }}.so
+          test -f artifacts/vialite-linux-${{ matrix.arch }}
           grep -E 'vialite_init.*graal_isolatethread_t' artifacts/libvialite.h
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
-          name: vialite-native
+          name: vialite-linux-${{ matrix.arch }}
+          path: artifacts/
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply ViaProxy overlay
+        shell: bash
+        run: bash build/apply-overlay.sh
+
+      - name: Build Windows executable
+        shell: pwsh
+        run: |
+          $root = Get-Location
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+          if (!(Test-Path $vswhere)) {
+            throw "vswhere.exe not found at $vswhere"
+          }
+          $vsInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vsInstall) {
+            throw "Visual Studio with MSVC x64 tools not found"
+          }
+          $vcvars = Join-Path $vsInstall "VC/Auxiliary/Build/vcvars64.bat"
+          if (!(Test-Path $vcvars)) {
+            throw "vcvars64.bat not found at $vcvars"
+          }
+
+          Set-Location build/.work/ViaProxy
+          cmd /c "`"$vcvars`" && gradlew.bat :vialite-native:nativeCompile --no-daemon --no-configuration-cache -Pvialite.native.shared=false"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          New-Item -ItemType Directory -Force "$root/artifacts" | Out-Null
+          Copy-Item vialite-native/build/native/nativeCompile/vialite.exe "$root/artifacts/vialite-windows-amd64.exe"
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: vialite-windows-amd64
           path: artifacts/
           if-no-files-found: error
