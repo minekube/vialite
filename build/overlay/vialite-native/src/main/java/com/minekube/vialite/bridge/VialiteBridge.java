@@ -72,7 +72,7 @@ public final class VialiteBridge {
             }
 
             shutdownServers();
-            initializeViaProxy();
+            initializeViaProxy(nativeConfig);
 
             ViaProxy.EVENT_MANAGER.unregister(ROUTE_EVENT_HANDLER);
             ROUTES_BY_LOCAL_PORT.clear();
@@ -81,7 +81,7 @@ public final class VialiteBridge {
             for (NativeBackend backend : nativeConfig.backends) {
                 BackendRoute route = BackendRoute.from(backend);
                 NetServer server = new NetServer(new Client2ProxyChannelInitializer(clientHandlerSupplier()));
-                server.bind(AddressUtil.parse(bindAddress(nativeConfig.bind), null), false);
+                server.bind(AddressUtil.parse(bindAddress(nativeConfig, backend), null), false);
                 SocketAddress localAddress = server.getChannel().localAddress();
                 if (!(localAddress instanceof InetSocketAddress inetSocketAddress)) {
                     server.getChannel().close().syncUninterruptibly();
@@ -145,7 +145,7 @@ public final class VialiteBridge {
         return () -> ViaProxy.EVENT_MANAGER.call(new Client2ProxyHandlerCreationEvent(new Client2ProxyHandler(), false)).getHandler();
     }
 
-    private static synchronized void initializeViaProxy() throws Exception {
+    private static synchronized void initializeViaProxy(NativeConfig nativeConfig) throws Exception {
         if (VIAPROXY_INITIALIZED.get()) {
             return;
         }
@@ -158,16 +158,17 @@ public final class VialiteBridge {
         setStatic(ViaProxy.class, "PLUGIN_MANAGER", new PluginManager());
         setStatic(ViaProxy.class, "SAVE_MANAGER", new SaveManager());
         ViaProxyConfig config = ViaProxyConfig.create(new File(cwd, "viaproxy.yml"));
-        configureViaProxy(config);
+        configureViaProxy(config, nativeConfig);
         setStatic(ViaProxy.class, "CONFIG", config);
         ProtocolTranslator.init();
         VIAPROXY_INITIALIZED.set(true);
     }
 
-    private static void configureViaProxy(ViaProxyConfig config) {
+    private static void configureViaProxy(ViaProxyConfig config, NativeConfig nativeConfig) {
+        ForwardingMode forwardingMode = forwardingMode(nativeConfig);
         config.setProxyOnlineMode(false);
         config.setAuthMethod(ViaProxyConfig.AuthMethod.NONE);
-        config.setPassthroughBungeecordPlayerInfo(true);
+        config.setPassthroughBungeecordPlayerInfo(forwardingMode == ForwardingMode.LEGACY);
         config.setRewriteHandshakePacket(true);
         config.setRewriteTransferPackets(true);
         config.setCompressionThreshold(256);
@@ -182,7 +183,27 @@ public final class VialiteBridge {
         field.set(null, value);
     }
 
-    private static String bindAddress(String bind) {
+    private static ForwardingMode forwardingMode(NativeConfig nativeConfig) {
+        ForwardingMode mode = null;
+        for (NativeBackend backend : nativeConfig.backends) {
+            ForwardingMode backendMode = ForwardingMode.from(backend.forwarding);
+            if (backendMode == ForwardingMode.VELOCITY) {
+                throw new UnsupportedOperationException("Velocity forwarding is not supported by vialite native runtime yet");
+            }
+            if (mode == null) {
+                mode = backendMode;
+            } else if (mode != backendMode) {
+                throw new IllegalArgumentException("Mixed backend forwarding modes are not supported by vialite native runtime");
+            }
+        }
+        return mode == null ? ForwardingMode.NONE : mode;
+    }
+
+    private static String bindAddress(NativeConfig nativeConfig, NativeBackend backend) {
+        String bind = backend.bind;
+        if (bind == null || bind.isBlank()) {
+            bind = nativeConfig.bind;
+        }
         if (bind == null || bind.isBlank()) {
             return "127.0.0.1:0";
         }
@@ -287,8 +308,28 @@ public final class VialiteBridge {
     private static final class NativeBackend {
         private String name;
         private String address;
+        private String bind;
         private String version;
         private boolean detect;
         private String forwarding;
+    }
+
+    private enum ForwardingMode {
+        NONE,
+        LEGACY,
+        VELOCITY;
+
+        private static ForwardingMode from(String value) {
+            if (value == null || value.isBlank() || value.equalsIgnoreCase("none")) {
+                return NONE;
+            }
+            if (value.equalsIgnoreCase("legacy")) {
+                return LEGACY;
+            }
+            if (value.equalsIgnoreCase("velocity")) {
+                return VELOCITY;
+            }
+            throw new IllegalArgumentException("Unknown backend forwarding mode: " + value);
+        }
     }
 }

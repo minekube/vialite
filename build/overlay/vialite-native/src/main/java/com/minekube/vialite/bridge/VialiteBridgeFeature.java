@@ -20,5 +20,19 @@ public final class VialiteBridgeFeature implements Feature {
                 throw new IllegalStateException("Failed to register ViaProxy reflection metadata", e);
             }
         }
+        registerAll(access.findClassByName("com.minekube.vialite.bridge.VialiteBridge$NativeConfig"));
+        registerAll(access.findClassByName("com.minekube.vialite.bridge.VialiteBridge$NativeBackend"));
+        registerAll(access.findClassByName("com.minekube.vialite.bridge.VialiteBridge$RouteEventHandler"));
+        registerAll(access.findClassByName("com.minekube.vialite.bridge.VialiteBridge$BackendRoute"));
+    }
+
+    private static void registerAll(Class<?> type) {
+        if (type == null) {
+            return;
+        }
+        RuntimeReflection.register(type);
+        RuntimeReflection.register(type.getDeclaredConstructors());
+        RuntimeReflection.register(type.getDeclaredFields());
+        RuntimeReflection.register(type.getDeclaredMethods());
     }
 }

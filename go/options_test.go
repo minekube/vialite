@@ -108,6 +108,14 @@ func TestOptionsValidateErrors(t *testing.T) {
 			want: ErrDuplicateBackend,
 		},
 		{
+			name: "duplicate backend name different case",
+			opts: Options{Backends: []Backend{
+				{Name: "Lobby", Address: "127.0.0.1:25565"},
+				{Name: "lobby", Address: "127.0.0.1:25566"},
+			}},
+			want: ErrDuplicateBackend,
+		},
+		{
 			name: "missing backend address",
 			opts: Options{Backends: []Backend{{Name: "lobby"}}},
 			want: ErrBackendAddressRequired,

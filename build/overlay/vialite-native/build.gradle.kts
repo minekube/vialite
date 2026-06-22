@@ -39,7 +39,7 @@ repositories {
 
 dependencies {
     compileOnly("org.graalvm.sdk:nativeimage:25.0.3")
-    compileOnly(rootProject)
+    implementation(rootProject)
 }
 
 java {

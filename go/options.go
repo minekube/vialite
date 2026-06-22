@@ -46,10 +46,11 @@ func (o Options) validate() (Options, error) {
 		if b.Name == "" {
 			return o, ErrBackendNameRequired
 		}
-		if _, ok := seen[b.Name]; ok {
+		key := backendLookupName(b.Name)
+		if _, ok := seen[key]; ok {
 			return o, fmt.Errorf("%w: %s", ErrDuplicateBackend, b.Name)
 		}
-		seen[b.Name] = struct{}{}
+		seen[key] = struct{}{}
 		if b.Address == "" {
 			return o, fmt.Errorf("%w: %s", ErrBackendAddressRequired, b.Name)
 		}
@@ -78,4 +79,8 @@ func (o Options) validate() (Options, error) {
 		}
 	}
 	return o, nil
+}
+
+func backendLookupName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }

@@ -80,6 +80,40 @@ func TestServerLifecycle(t *testing.T) {
 	cancel()
 }
 
+func TestBackendDialAddressIsCaseInsensitive(t *testing.T) {
+	fr := &fakeRunner{
+		started:  make(chan struct{}),
+		backends: map[string]string{"lobby": "127.0.0.1:40000"},
+	}
+	srv := &Server{runner: fr, opts: Options{Backends: []Backend{{Name: "Lobby", Address: "127.0.0.1:25566"}}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+	<-fr.started
+	if err := srv.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	got, err := srv.BackendDialAddress("Lobby")
+	if err != nil {
+		t.Fatalf("BackendDialAddress original case: %v", err)
+	}
+	if got != "127.0.0.1:40000" {
+		t.Fatalf("BackendDialAddress original case = %q", got)
+	}
+	got, err = srv.BackendDialAddress("lobby")
+	if err != nil {
+		t.Fatalf("BackendDialAddress lower case: %v", err)
+	}
+	if got != "127.0.0.1:40000" {
+		t.Fatalf("BackendDialAddress lower case = %q", got)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Start returned %v, want nil", err)
+	}
+}
+
 func TestBackendDialAddressErrors(t *testing.T) {
 	srv := &Server{runner: &fakeRunner{started: make(chan struct{}), backends: map[string]string{}}, opts: Options{}}
 	if _, err := srv.BackendDialAddress("missing"); !errors.Is(err, ErrNotStarted) {
