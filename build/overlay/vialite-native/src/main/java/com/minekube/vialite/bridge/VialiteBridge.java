@@ -72,9 +72,9 @@ public final class VialiteBridge {
             default -> throw new IllegalArgumentException("unsupported forwarding mode: " + backend.forwarding);
         };
 
-        return "bind-address: " + config.bind + "\n"
-            + "target-address: " + backend.address + "\n"
-            + "target-version: " + viaProxyTargetVersion(backend.version) + "\n"
+        return "bind-address: " + yamlString(config.bind) + "\n"
+            + "target-address: " + yamlString(backend.address) + "\n"
+            + "target-version: " + yamlString(viaProxyTargetVersion(backend.version)) + "\n"
             + "proxy-online-mode: false\n"
             + "auth-method: none\n"
             + "backend-haproxy: false\n"
@@ -92,6 +92,10 @@ public final class VialiteBridge {
             return VIA_PROXY_AUTO_DETECT_VERSION;
         }
         return version;
+    }
+
+    static String yamlString(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     static File configPath(String[] args) {

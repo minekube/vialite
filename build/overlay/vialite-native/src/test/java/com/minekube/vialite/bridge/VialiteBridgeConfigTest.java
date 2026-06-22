@@ -31,9 +31,9 @@ final class VialiteBridgeConfigTest {
 
         String yaml = VialiteBridge.toViaProxyYaml(config);
 
-        assertTrue(yaml.contains("bind-address: 127.0.0.1:25590"));
-        assertTrue(yaml.contains("target-address: 127.0.0.1:25566"));
-        assertTrue(yaml.contains("target-version: Auto Detect (1.7+ servers)"));
+        assertTrue(yaml.contains("bind-address: \"127.0.0.1:25590\""));
+        assertTrue(yaml.contains("target-address: \"127.0.0.1:25566\""));
+        assertTrue(yaml.contains("target-version: \"Auto Detect (1.7+ servers)\""));
         assertTrue(yaml.contains("bungeecord-player-info-passthrough: true"));
     }
 
@@ -47,7 +47,22 @@ final class VialiteBridgeConfigTest {
 
         String yaml = VialiteBridge.toViaProxyYaml(config);
 
-        assertTrue(yaml.contains("target-version: Auto Detect (1.7+ servers)"));
+        assertTrue(yaml.contains("target-version: \"Auto Detect (1.7+ servers)\""));
+    }
+
+    @Test
+    void quotesYamlStringScalars() {
+        VialiteBridge.NativeConfig config = VialiteBridge.parseConfig("""
+            {"bind":"[::1]:25590","backends":[
+              {"name":"lobby","address":"[::1]:25566","version":"1.20.4","detect":false,"forwarding":"none"}
+            ]}
+            """);
+
+        String yaml = VialiteBridge.toViaProxyYaml(config);
+
+        assertTrue(yaml.contains("bind-address: \"[::1]:25590\""));
+        assertTrue(yaml.contains("target-address: \"[::1]:25566\""));
+        assertTrue(yaml.contains("target-version: \"1.20.4\""));
     }
 
     @Test

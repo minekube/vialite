@@ -186,6 +186,76 @@ func TestSubprocessRunnerStartsOneProcessPerBackend(t *testing.T) {
 	cancel()
 }
 
+func TestSubprocessRunnerKeepsBackendAddressAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	bin := buildSubprocessHelper(t)
+	t.Setenv("VIALITE_HELPER_RECORD_DIR", dir)
+	t.Setenv("VIALITE_HELPER_EXIT_AFTER_ACCEPT", "1")
+
+	opts, err := Options{
+		Mode:            ModeSubprocess,
+		BinaryPath:      bin,
+		ShutdownTimeout: time.Second,
+		RestartPolicy: &RestartPolicy{
+			MinBackoff: time.Millisecond,
+			MaxBackoff: time.Millisecond,
+			MaxRetries: 1,
+		},
+		Backends: []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	if err := srv.WaitReady(context.Background()); err != nil {
+		cancel()
+		t.Fatalf("WaitReady: %v", err)
+	}
+	firstAddr, err := srv.BackendDialAddress("lobby")
+	if err != nil {
+		cancel()
+		t.Fatalf("BackendDialAddress first: %v", err)
+	}
+	conn, err := net.DialTimeout("tcp", firstAddr, time.Second)
+	if err != nil {
+		cancel()
+		t.Fatalf("dial backend listener %s: %v", firstAddr, err)
+	}
+	_ = conn.Close()
+
+	deadline := time.After(time.Second)
+	for countFiles(t, dir, "config-*.json") < 2 {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("subprocess did not restart after ready child exit")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	secondAddr, err := srv.BackendDialAddress("lobby")
+	if err != nil {
+		cancel()
+		t.Fatalf("BackendDialAddress second: %v", err)
+	}
+	if secondAddr != firstAddr {
+		cancel()
+		t.Fatalf("backend address changed across restart: first %s, second %s", firstAddr, secondAddr)
+	}
+	if err := srv.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Start returned %v, want nil", err)
+	}
+	cancel()
+}
+
 func countFiles(t *testing.T, dir, pattern string) int {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(dir, pattern))
@@ -267,6 +337,9 @@ var cfg nativeConfig
 			return
 		}
 		_ = conn.Close()
+		if os.Getenv("VIALITE_HELPER_EXIT_AFTER_ACCEPT") != "" {
+			return
+		}
 	}
 }
 `

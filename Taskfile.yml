@@ -20,6 +20,12 @@ tasks:
     cmds:
       - go test ./...
 
+  test:go-race:
+    desc: run Go tests with the race detector
+    dir: go
+    cmds:
+      - go test -race ./... -count=1
+
   test:java-overlay:
     desc: run Java tests for the ViaProxy overlay
     cmds:
@@ -28,7 +34,7 @@ tasks:
 
   test:
     desc: run all tests
-    deps: [test:go, test:java-overlay]
+    deps: [test:go, test:go-race, test:java-overlay]
 
   test:quick:
     desc: run quick tests that do not clone/apply the ViaProxy overlay

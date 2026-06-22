@@ -38,6 +38,10 @@ jobs:
         working-directory: go
         run: go test ./...
 
+      - name: Test Go module with race detector
+        working-directory: go
+        run: go test -race ./... -count=1
+
   java-overlay-test:
     runs-on: ubuntu-latest
     steps:

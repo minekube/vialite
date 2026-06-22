@@ -38,15 +38,21 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 	if err := validateSubprocessBind(opts.Bind, len(opts.Backends)); err != nil {
 		return err
 	}
+	backends, err := allocateBackendAddresses(opts)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.backends = backends
+	r.mu.Unlock()
 	backoff := s.opts.RestartPolicy.MinBackoff
 	for attempt := 0; ; attempt++ {
-		children, backends, err := r.startChildren(ctx, bin, opts)
+		children, err := r.startChildren(ctx, bin, opts, backends)
 		if err != nil {
 			return err
 		}
 		r.mu.Lock()
 		r.children = children
-		r.backends = backends
 		r.mu.Unlock()
 		r.healthy.Store(true)
 
@@ -100,24 +106,35 @@ func validateSubprocessBind(bind string, backendCount int) error {
 	return nil
 }
 
-func (r *subprocessRunner) startChildren(ctx context.Context, bin string, opts Options) (map[string]*subprocessChild, map[string]string, error) {
-	children := make(map[string]*subprocessChild, len(opts.Backends))
+func allocateBackendAddresses(opts Options) (map[string]string, error) {
 	backends := make(map[string]string, len(opts.Backends))
 	for i, backend := range opts.Backends {
 		addr, err := loopbackBackendAddress(opts.Bind, i)
 		if err != nil {
+			return nil, fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
+		}
+		backends[backend.Name] = addr
+	}
+	return backends, nil
+}
+
+func (r *subprocessRunner) startChildren(ctx context.Context, bin string, opts Options, backends map[string]string) (map[string]*subprocessChild, error) {
+	children := make(map[string]*subprocessChild, len(opts.Backends))
+	for _, backend := range opts.Backends {
+		addr, ok := backends[backend.Name]
+		if !ok {
 			stopChildren(children, opts.ShutdownTimeout)
-			return nil, nil, fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
+			return nil, fmt.Errorf("vialite: missing subprocess backend address for %s", backend.Name)
 		}
 		config, err := opts.nativeConfigJSONForBackend(backend, addr)
 		if err != nil {
 			stopChildren(children, opts.ShutdownTimeout)
-			return nil, nil, err
+			return nil, err
 		}
 		configPath, err := writeTempConfig(config)
 		if err != nil {
 			stopChildren(children, opts.ShutdownTimeout)
-			return nil, nil, err
+			return nil, err
 		}
 		cmd := exec.CommandContext(ctx, bin, "--config", configPath)
 		cmd.Stdout = os.Stdout
@@ -132,16 +149,15 @@ func (r *subprocessRunner) startChildren(ctx context.Context, bin string, opts O
 		if err := cmd.Start(); err != nil {
 			_ = os.Remove(configPath)
 			stopChildren(children, opts.ShutdownTimeout)
-			return nil, nil, err
+			return nil, err
 		}
 		go func() {
 			child.err = cmd.Wait()
 			close(child.done)
 		}()
 		children[backend.Name] = child
-		backends[backend.Name] = addr
 	}
-	return children, backends, nil
+	return children, nil
 }
 
 func waitChildListeners(ctx context.Context, children map[string]*subprocessChild) error {
@@ -185,7 +201,9 @@ func stopChildren(children map[string]*subprocessChild, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	for _, child := range children {
-		if child.cmd != nil && child.cmd.Process != nil && child.cmd.ProcessState == nil {
+		select {
+		case <-child.done:
+		default:
 			_ = terminateProcess(child.cmd.Process)
 		}
 	}
@@ -241,6 +259,8 @@ func (r *subprocessRunner) isHealthy() bool {
 }
 
 func (r *subprocessRunner) backendAddress(name string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	addr, ok := r.backends[name]
 	if !ok {
 		return "", ErrBackendNotFound
