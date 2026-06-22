@@ -48,6 +48,10 @@ java {
     }
 }
 
+val sharedImage = providers.gradleProperty("vialite.native.shared")
+    .map(String::toBoolean)
+    .getOrElse(true)
+
 graalvmNative {
     toolchainDetection.set(false)
     metadataRepository {
@@ -55,18 +59,23 @@ graalvmNative {
     }
     binaries {
         named("main") {
-            imageName.set("vialite")
-            sharedLibrary.set(true)
+            imageName.set(if (sharedImage) "libvialite" else "vialite")
+            sharedLibrary.set(sharedImage)
             mainClass.set("com.minekube.vialite.bridge.VialiteBridge")
-            buildArgs.addAll(
+            val args = mutableListOf(
                 "--no-fallback",
                 "--enable-url-protocols=http,https",
-                "-H:Name=libvialite",
                 "-H:Features=com.minekube.vialite.bridge.VialiteBridgeFeature",
                 "-H:IncludeResources=^(assets/.+|mappings/.+|META-INF/services/.+|.+\\.json|.+\\.properties)$",
                 "-H:+UnlockExperimentalVMOptions",
                 "-O2"
             )
+            if (sharedImage) {
+                args.add("-H:Name=libvialite")
+            } else {
+                args.add("-H:Name=vialite")
+            }
+            buildArgs.addAll(args)
         }
     }
 }
