@@ -37,12 +37,27 @@ repositories {
     mavenCentral()
 }
 
+val sharedImage = providers.gradleProperty("vialite.native.shared")
+    .map(String::toBoolean)
+    .getOrElse(true)
+
 dependencies {
     compileOnly("org.graalvm.sdk:nativeimage:25.0.3")
-    implementation(rootProject)
+    compileOnly(project(":")) {
+        isTransitive = false
+    }
+    if (!sharedImage) {
+        implementation(project(":")) {
+            isTransitive = false
+        }
+        implementation("org.bouncycastle:bctls-jdk18on:1.84")
+    }
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly(project(":")) {
+        isTransitive = false
+    }
 }
 
 java {
@@ -50,10 +65,6 @@ java {
         languageVersion.set(JavaLanguageVersion.of(21))
     }
 }
-
-val sharedImage = providers.gradleProperty("vialite.native.shared")
-    .map(String::toBoolean)
-    .getOrElse(true)
 
 graalvmNative {
     toolchainDetection.set(false)
@@ -64,7 +75,11 @@ graalvmNative {
         named("main") {
             imageName.set(if (sharedImage) "libvialite" else "vialite")
             sharedLibrary.set(sharedImage)
-            mainClass.set("com.minekube.vialite.bridge.VialiteBridge")
+            mainClass.set(if (sharedImage) {
+                "com.minekube.vialite.bridge.VialiteBridge"
+            } else {
+                "com.minekube.vialite.bridge.VialiteLauncher"
+            })
             val args = mutableListOf(
                 "--no-fallback",
                 "--enable-url-protocols=http,https",
@@ -77,6 +92,7 @@ graalvmNative {
                 args.add("-H:Name=libvialite")
             } else {
                 args.add("-H:Name=vialite")
+                args.add("--initialize-at-run-time=org.apache.logging.log4j,org.slf4j,io.netty,org.bouncycastle")
             }
             buildArgs.addAll(args)
         }

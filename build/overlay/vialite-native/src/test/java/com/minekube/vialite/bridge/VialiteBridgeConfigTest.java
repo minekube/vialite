@@ -16,20 +16,20 @@ final class VialiteBridgeConfigTest {
             """;
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-            () -> VialiteBridge.parseConfig(json));
+            () -> VialiteLauncher.parseConfig(json));
 
         assertTrue(ex.getMessage().contains("exactly one backend"));
     }
 
     @Test
     void writesLegacyForwardingViaProxyYaml() {
-        VialiteBridge.NativeConfig config = VialiteBridge.parseConfig("""
+        VialiteLauncher.NativeConfig config = VialiteLauncher.parseConfig("""
             {"bind":"127.0.0.1:25590","backends":[
               {"name":"lobby","address":"127.0.0.1:25566","version":"auto","detect":true,"forwarding":"legacy"}
             ]}
             """);
 
-        String yaml = VialiteBridge.toViaProxyYaml(config);
+        String yaml = VialiteLauncher.toViaProxyYaml(config);
 
         assertTrue(yaml.contains("bind-address: \"127.0.0.1:25590\""));
         assertTrue(yaml.contains("target-address: \"127.0.0.1:25566\""));
@@ -39,26 +39,26 @@ final class VialiteBridgeConfigTest {
 
     @Test
     void normalizesAutoVersionForViaProxyConfigLoader() {
-        VialiteBridge.NativeConfig config = VialiteBridge.parseConfig("""
+        VialiteLauncher.NativeConfig config = VialiteLauncher.parseConfig("""
             {"bind":"127.0.0.1:25590","backends":[
               {"name":"lobby","address":"127.0.0.1:25566","version":"auto","detect":true,"forwarding":"none"}
             ]}
             """);
 
-        String yaml = VialiteBridge.toViaProxyYaml(config);
+        String yaml = VialiteLauncher.toViaProxyYaml(config);
 
         assertTrue(yaml.contains("target-version: \"Auto Detect (1.7+ servers)\""));
     }
 
     @Test
     void quotesYamlStringScalars() {
-        VialiteBridge.NativeConfig config = VialiteBridge.parseConfig("""
+        VialiteLauncher.NativeConfig config = VialiteLauncher.parseConfig("""
             {"bind":"[::1]:25590","backends":[
               {"name":"lobby","address":"[::1]:25566","version":"1.20.4","detect":false,"forwarding":"none"}
             ]}
             """);
 
-        String yaml = VialiteBridge.toViaProxyYaml(config);
+        String yaml = VialiteLauncher.toViaProxyYaml(config);
 
         assertTrue(yaml.contains("bind-address: \"[::1]:25590\""));
         assertTrue(yaml.contains("target-address: \"[::1]:25566\""));
@@ -67,14 +67,14 @@ final class VialiteBridgeConfigTest {
 
     @Test
     void rejectsVelocityForwardingUntilProven() {
-        VialiteBridge.NativeConfig config = VialiteBridge.parseConfig("""
+        VialiteLauncher.NativeConfig config = VialiteLauncher.parseConfig("""
             {"bind":"127.0.0.1:25590","backends":[
               {"name":"lobby","address":"127.0.0.1:25566","version":"auto","detect":true,"forwarding":"velocity"}
             ]}
             """);
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-            () -> VialiteBridge.toViaProxyYaml(config));
+            () -> VialiteLauncher.toViaProxyYaml(config));
 
         assertTrue(ex.getMessage().contains("velocity"));
     }

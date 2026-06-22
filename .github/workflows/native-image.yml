@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - 'build/**'
+      - '.dockerignore'
       - '.github/workflows/native-image.yml'
   pull_request:
     paths:
       - 'build/**'
+      - '.dockerignore'
       - '.github/workflows/native-image.yml'
   workflow_dispatch:
 
