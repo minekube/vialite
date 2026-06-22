@@ -1,0 +1,107 @@
+/*
+ * This file is part of ViaProxy - https://github.com/RaphiMC/ViaProxy
+ * Copyright (C) 2021-2026 RK_01/RaphiMC and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+package net.raphimc.viaproxy.saves;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.util.HashMap;
+import java.util.Map;
+import net.raphimc.viaproxy.ViaProxy;
+import net.raphimc.viaproxy.saves.impl.AccountsSave;
+import net.raphimc.viaproxy.saves.impl.UISave;
+import net.raphimc.viaproxy.util.logging.Logger;
+
+public class SaveManager {
+
+    private static final File SAVE_FILE = new File(ViaProxy.getCwd(), "saves.json");
+    private static final Gson GSON = new Gson();
+
+    public final AccountsSave accountsSave = new AccountsSave();
+    public final UISave uiSave = new UISave();
+
+    private final Map<String, JsonElement> unknownSaves = new HashMap<>();
+
+    public SaveManager() {
+        try {
+            if (!SAVE_FILE.exists()) {
+                SAVE_FILE.createNewFile();
+                this.save();
+            }
+
+            final FileReader reader = new FileReader(SAVE_FILE);
+            JsonObject saveObject = GSON.fromJson(reader, JsonObject.class);
+            reader.close();
+            if (saveObject == null) {
+                saveObject = new JsonObject();
+            }
+
+            SaveMigrator.migrate(saveObject);
+            this.loadSave(saveObject, this.accountsSave);
+            this.loadSave(saveObject, this.uiSave);
+
+            for (Map.Entry<String, JsonElement> entry : saveObject.entrySet()) {
+                this.unknownSaves.put(entry.getKey(), entry.getValue());
+            }
+
+            this.save();
+        } catch (Throwable e) {
+            throw new RuntimeException("Failed to initialize SaveManager", e);
+        }
+    }
+
+    public synchronized void save() {
+        try {
+            final JsonObject saveObject = new JsonObject();
+            this.unknownSaves.forEach(saveObject::add);
+            this.saveSave(saveObject, this.accountsSave);
+            this.saveSave(saveObject, this.uiSave);
+
+            final FileWriter writer = new FileWriter(SAVE_FILE);
+            GSON.toJson(saveObject, writer);
+            writer.close();
+        } catch (Throwable e) {
+            Logger.LOGGER.error("Failed to save saves to file", e);
+        }
+    }
+
+    private void loadSave(final JsonObject saveObject, final AbstractSave save) {
+        try {
+            if (saveObject.has(save.getName())) {
+                save.load(saveObject.remove(save.getName()));
+            }
+        } catch (Throwable e) {
+            Logger.LOGGER.error("Failed to load save " + save.getName(), e);
+        }
+    }
+
+    private void saveSave(final JsonObject saveObject, final AbstractSave save) {
+        try {
+            final JsonElement saveData = save.save();
+            if (saveData != null) {
+                saveObject.add(save.getName(), saveData);
+            }
+        } catch (Throwable e) {
+            Logger.LOGGER.error("Failed to save save " + save.getName(), e);
+        }
+    }
+
+}

@@ -38,6 +38,10 @@ jobs:
         working-directory: go
         run: go test ./...
 
+      - name: Cross-compile Windows Go module
+        working-directory: go
+        run: GOOS=windows GOARCH=amd64 go test -c -o /tmp/vialite-windows-amd64.test.exe .
+
   docs-lint:
     runs-on: ubuntu-latest
     steps:
