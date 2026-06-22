@@ -133,7 +133,7 @@ func fetchExpectedSha(ctx context.Context, base, version, assetName string) (str
 	if err != nil {
 		return "", fmt.Errorf("vialite: fetch checksums for %s: %w", version, err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(body, 1<<20))
 	if err != nil {
 		return "", err
@@ -168,7 +168,7 @@ func downloadFile(ctx context.Context, url, dest string) error {
 	if err != nil {
 		return fmt.Errorf("vialite: get %s: %w", url, err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
@@ -202,7 +202,7 @@ func shaFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return streamSha(f)
 }
 
