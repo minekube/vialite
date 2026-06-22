@@ -14,6 +14,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  actions: read
 
 jobs:
   release:
@@ -24,38 +25,78 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.release_tag || github.ref }}
 
-      - name: Read GraalVM image pin
-        id: pins
-        run: echo "graalvm=$(tr -d '[:space:]' < build/graalvm.version)" >> "$GITHUB_OUTPUT"
-
-      - name: Build native artifact from release ref
+      - name: Pull native artifacts for this release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker build \
-            -f build/Dockerfile \
-            --build-arg GRAALVM_IMAGE="${{ steps.pins.outputs.graalvm }}" \
-            --build-arg TARGETOS=linux \
-            --build-arg TARGETARCH=amd64 \
-            --target shared \
-            -t ghcr.io/minekube/vialite:native-release \
-            .
+          set -euo pipefail
+
           mkdir -p artifacts
-          id="$(docker create ghcr.io/minekube/vialite:native-release)"
-          docker cp "$id:/out/." artifacts/
-          docker rm "$id"
-          ls -la artifacts
+
+          NATIVE_SHA=$(git log -n 1 --format=%H -- \
+            build \
+            .github/workflows/native-image.yml)
+
+          if [ -z "$NATIVE_SHA" ]; then
+            echo "::error::Could not resolve native artifact source commit"
+            exit 1
+          fi
+
+          echo "Waiting for native-image.yml artifacts from $NATIVE_SHA"
+          RUN_ID=""
+          RUN_URL=""
+          for _ in $(seq 1 240); do
+            RUN_JSON=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow=native-image.yml \
+              --branch=main \
+              --limit=100 \
+              --json databaseId,headSha,status,conclusion,url,createdAt \
+              --jq "map(select(.headSha == \"$NATIVE_SHA\")) | sort_by(.createdAt) | reverse | .[0] // {}")
+
+            RUN_ID=$(echo "$RUN_JSON" | jq -r '.databaseId // ""')
+            STATUS=$(echo "$RUN_JSON" | jq -r '.status // ""')
+            CONCLUSION=$(echo "$RUN_JSON" | jq -r '.conclusion // ""')
+            RUN_URL=$(echo "$RUN_JSON" | jq -r '.url // ""')
+
+            if [ -z "$RUN_ID" ]; then
+              echo "No native-image.yml run for $NATIVE_SHA yet; waiting..."
+              sleep 10
+              continue
+            fi
+
+            echo "native-image.yml run $RUN_ID is $STATUS/$CONCLUSION: $RUN_URL"
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                break
+              fi
+              echo "::error::native-image.yml run $RUN_ID concluded $CONCLUSION"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          if [ -z "$RUN_ID" ] || [ "$STATUS" != "completed" ] || [ "$CONCLUSION" != "success" ]; then
+            echo "::error::Timed out waiting for successful native-image.yml artifacts from $NATIVE_SHA"
+            exit 1
+          fi
+
+          gh run download "$RUN_ID" --dir artifacts --pattern 'vialite-*'
+          ls -la artifacts/
 
       - name: Generate checksums
         run: |
-          mkdir -p artifacts
           ( cd artifacts
             shopt -s globstar nullglob
             for f in **/*; do
               [ -f "$f" ] || continue
               base="$(basename "$f")"
-              case "$base" in checksums.txt) continue;; esac
+              case "$base" in *.sig|*.attest.spdx.json|checksums.txt) continue;; esac
               sha256sum "$f" | awk -v b="$base" '{ print $1 "  " b }'
-            done | sort -k2 > checksums.txt
+            done | sort -k2 > /tmp/checksums.txt
           )
+          mv /tmp/checksums.txt artifacts/checksums.txt
           cat artifacts/checksums.txt
 
       - name: Create GitHub Release
