@@ -37,21 +37,19 @@ char* vialite_backend_address(graal_isolatethread_t* thread, char* backend_name)
 ```
 
 The checked-in native layer is currently an ABI and native-image scaffold.
-The intended runtime uses a native-library-owned loopback listener
-internally because ViaProxy already models translation around Netty
-channels. That listener stays internal to the loaded library. Operators
-manage `vialite` as an in-process Gate capability, not as a standalone
-sidecar.
+The current runtime uses a vialite-owned loopback listener internally because
+ViaProxy already models translation around Netty channels. Gate manages the
+native vialite runtime as part of its own lifecycle; the default integration path
+is subprocess mode so released artifacts work across Linux amd64/arm64 and
+Windows amd64 without embedding native code in the Gate process.
 
 ### Go Layer
 
-The Go module loads `libvialite.so` through `purego`, validates options,
-materializes native config JSON, creates the Graal isolate, starts the
-native runtime, waits for readiness, and resolves a backend name to the
-local translated address Gate should dial.
-
-Subprocess mode uses the same config surface and exists for debugging and
-crash isolation. Embedded mode is the default and primary path.
+The Go module validates options, materializes native config JSON, starts the
+native runtime, waits for readiness, and resolves a backend name to the local
+translated address Gate should dial. Subprocess mode starts the released native
+binary and is the default path. Embedded mode loads `libvialite.so` through
+`purego` where that runtime shape is viable.
 
 ### Gate Adapter
 
