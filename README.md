@@ -45,7 +45,7 @@ not the first frontend compatibility layer for clients Gate cannot parse.
 When `Options.Version` is empty, `auto`, or `latest`, the Go module checks the
 latest stable GitHub release, downloads the matching checksummed artifact into
 the local cache, and starts that artifact. Set `Version` to a tag such as
-`v0.2.4` to pin an exact release, set `Offline` to disable network access, or
+`v0.2.5` to pin an exact release, set `Offline` to disable network access, or
 set `BinaryPath`/`LibraryPath` to use a local artifact directly.
 
 ## Go Quick Start
