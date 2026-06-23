@@ -8,7 +8,7 @@ REF="$(tr -d '[:space:]' < "$ROOT/build/via.version")"
 
 mkdir -p "$WORK"
 if [ ! -d "$SRC/.git" ]; then
-  git clone https://github.com/RaphiMC/ViaProxy.git "$SRC"
+  git clone https://github.com/ViaVersion/ViaProxy.git "$SRC"
 fi
 
 git -C "$SRC" fetch --tags origin
