@@ -12,10 +12,11 @@
 
 </div>
 
-`vialite` packages Via-powered Minecraft protocol translation behind a
-GraalVM native shared library and a small Go API. Gate can load it
-in-process, route selected backend connections through it, and keep
-owning frontend auth, events, routing, Connect, and backend login.
+`vialite` packages Via-powered Minecraft protocol translation behind
+GraalVM native artifacts and a small Go API. Gate can start the native
+runtime as a managed subprocess, or load the shared library in-process where
+embedded mode is viable, while keeping ownership of frontend auth, events,
+routing, Connect, and backend login.
 
 Target topology:
 
@@ -23,7 +24,7 @@ Target topology:
 player / Bedrock
   -> optional geyserlite
   -> Gate classic
-  -> libvialite loaded in-process
+  -> managed vialite native runtime
   -> backend server
 ```
 
@@ -41,10 +42,11 @@ not the first frontend compatibility layer for clients Gate cannot parse.
 | Native build scaffold | ViaProxy soft-fork overlay and isolate-thread-aware C ABI contract |
 | Release/update loop | CI, release-please, Renovate, checksummed Linux amd64/arm64 libraries and subprocess binaries, plus Windows amd64 subprocess binary |
 
-The current native artifact is an ABI/build scaffold. It proves the
-GraalVM shared-library shape and Go loading path, but full Via runtime
-translation, backend probing, and forwarding preservation are target
-behavior for the next implementation slice.
+When `Options.Version` is empty, `auto`, or `latest`, the Go module checks the
+latest stable GitHub release, downloads the matching checksummed artifact into
+the local cache, and starts that artifact. Set `Version` to a tag such as
+`v0.2.4` to pin an exact release, set `Offline` to disable network access, or
+set `BinaryPath`/`LibraryPath` to use a local artifact directly.
 
 ## Go Quick Start
 

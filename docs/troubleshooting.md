@@ -10,6 +10,14 @@ Embedded mode resolves `libvialite.so` in this order:
 4. system library paths
 5. GitHub Release auto-download
 
+If `Options.Version` is empty, `auto`, or `latest`, auto-download first
+resolves the latest stable `minekube/vialite` release and then verifies the
+downloaded artifact against that release's `checksums.txt`. Set
+`Options.Version` to an exact tag, such as `v0.2.4`, to pin the artifact. Custom
+mirrors with an empty `Options.Version` keep using the default release tag;
+custom mirrors that use `auto` or `latest` must expose `/latest` JSON containing
+a `tag_name` field.
+
 Set `Options.Offline=true` to disable auto-download.
 
 ## Native Binary Not Found
@@ -20,10 +28,13 @@ Subprocess mode resolves `vialite` in this order:
 2. `$VIALITE_BINARY`
 3. embedded asset built with `-tags vialite_embed`
 4. `$PATH`
+5. GitHub Release auto-download
 
-GitHub Release auto-download currently publishes the shared library, not a
-standalone subprocess binary. Use embedded mode for auto-download, or set a
-local subprocess binary path explicitly.
+GitHub Release auto-download supports Linux amd64/arm64 subprocess binaries and
+the Windows amd64 subprocess binary. If `Options.Version` is empty, `auto`, or
+`latest`, the latest stable release is resolved before checksums and the binary
+are downloaded. Set `Options.BinaryPath` to bypass download and use a local
+binary.
 
 ## Backend Detection
 
