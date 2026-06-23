@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,17 +29,17 @@ var (
 )
 
 func downloadAsset(ctx context.Context, opts Options, kind assetKind) (string, error) {
-	version := opts.Version
-	if version == "" {
-		version = DefaultVersion
+	assetName, err := assetForRuntime(kind)
+	if err != nil {
+		return "", err
+	}
+	version, err := resolveDownloadVersion(ctx, opts)
+	if err != nil {
+		return "", err
 	}
 	base := opts.Mirror
 	if base == "" {
 		base = DefaultDownloadBase
-	}
-	assetName, err := assetForRuntime(kind)
-	if err != nil {
-		return "", err
 	}
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
@@ -88,6 +89,52 @@ func downloadAsset(ctx context.Context, opts Options, kind assetKind) (string, e
 		return "", fmt.Errorf("vialite: rename %s: %w", cachedPath, err)
 	}
 	return cachedPath, nil
+}
+
+func resolveDownloadVersion(ctx context.Context, opts Options) (string, error) {
+	version := strings.TrimSpace(opts.Version)
+	if version == "" && opts.Mirror != "" {
+		return DefaultVersion, nil
+	}
+	if !latestVersionRequested(version) {
+		return version, nil
+	}
+	url := DefaultLatestReleaseURL
+	if opts.Mirror != "" {
+		url = strings.TrimSuffix(opts.Mirror, "/") + "/latest"
+	}
+	version, err := fetchLatestReleaseTag(ctx, url)
+	if err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
+func latestVersionRequested(version string) bool {
+	return version == "" || strings.EqualFold(version, "auto") || strings.EqualFold(version, "latest")
+}
+
+func fetchLatestReleaseTag(ctx context.Context, url string) (string, error) {
+	body, err := httpGet(ctx, url)
+	if err != nil {
+		return "", fmt.Errorf("vialite: fetch latest release: %w", err)
+	}
+	defer func() { _ = body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(body, 64<<10))
+	if err != nil {
+		return "", err
+	}
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.Unmarshal(data, &release); err != nil {
+		return "", fmt.Errorf("vialite: parse latest release metadata: %w", err)
+	}
+	tag := strings.TrimSpace(release.TagName)
+	if tag == "" {
+		return "", errors.New("vialite: latest release metadata missing tag_name")
+	}
+	return tag, nil
 }
 
 func verifiedDownloadPath(dir, assetName, expectedSha string) string {

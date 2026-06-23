@@ -212,3 +212,181 @@ func TestDownloadAssetBinaryUsesPlatformNamedReleaseAsset(t *testing.T) {
 		t.Fatalf("downloaded binary mode = %v, want executable bit", info.Mode())
 	}
 }
+
+func TestDownloadAssetAutoVersionUsesLatestRelease(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-binary"
+	const sha = "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	var sawLatest bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest":
+			sawLatest = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
+		case "/v9.9.9/checksums.txt":
+			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
+		case "/v9.9.9/vialite-linux-arm64":
+			_, _ = w.Write([]byte(body))
+		case "/" + DefaultVersion + "/checksums.txt":
+			t.Fatalf("empty version used DefaultVersion instead of latest release")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	path, err := downloadAsset(context.Background(), Options{Version: "auto", Mirror: srv.URL}, assetKindBinary)
+	if err != nil {
+		t.Fatalf("downloadAsset latest: %v", err)
+	}
+	if !sawLatest {
+		t.Fatal("downloadAsset did not request latest release metadata")
+	}
+	if !strings.Contains(path, filepath.Join("vialite", "v9.9.9", sha)) {
+		t.Fatalf("download path = %q, want resolved latest version and checksum", path)
+	}
+}
+
+func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultVersion(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-binary"
+	const sha = "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest":
+			t.Fatalf("empty custom-mirror version unexpectedly requested latest release metadata")
+		case "/" + DefaultVersion + "/checksums.txt":
+			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
+		case "/" + DefaultVersion + "/vialite-linux-arm64":
+			_, _ = w.Write([]byte(body))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	path, err := downloadAsset(context.Background(), Options{Mirror: srv.URL}, assetKindBinary)
+	if err != nil {
+		t.Fatalf("downloadAsset empty mirror version: %v", err)
+	}
+	if !strings.Contains(path, filepath.Join("vialite", DefaultVersion, sha)) {
+		t.Fatalf("download path = %q, want default version and checksum", path)
+	}
+}
+
+func TestDownloadAssetLatestAliasesUseLatestRelease(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "amd64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-library"
+	const sha = "01307e18b53bf651632b9119874fdff0771bfe2f2dafc10af8a901b394842a70"
+	for _, version := range []string{"auto", "latest", " Latest "} {
+		t.Run(version, func(t *testing.T) {
+			var sawLatest bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/latest":
+					sawLatest = true
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"tag_name":"v8.0.0"}`))
+				case "/v8.0.0/checksums.txt":
+					_, _ = w.Write([]byte(sha + "  libvialite-linux-amd64.so\n"))
+				case "/v8.0.0/libvialite-linux-amd64.so":
+					_, _ = w.Write([]byte(body))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			cache := t.TempDir()
+			t.Setenv("XDG_CACHE_HOME", cache)
+			path, err := downloadAsset(context.Background(), Options{Version: version, Mirror: srv.URL}, assetKindLibrary)
+			if err != nil {
+				t.Fatalf("downloadAsset alias %q: %v", version, err)
+			}
+			if !sawLatest {
+				t.Fatalf("downloadAsset alias %q did not request latest release metadata", version)
+			}
+			if !strings.Contains(path, filepath.Join("vialite", "v8.0.0", sha)) {
+				t.Fatalf("download path = %q, want resolved latest version and checksum", path)
+			}
+		})
+	}
+}
+
+func TestDownloadAssetUnsupportedRuntimeSkipsLatestRelease(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "darwin", "amd64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/latest" {
+			t.Fatalf("unsupported runtime unexpectedly requested latest release metadata")
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := downloadAsset(context.Background(), Options{Version: "auto", Mirror: srv.URL}, assetKindLibrary)
+	if err == nil {
+		t.Fatal("downloadAsset unsupported runtime succeeded")
+	}
+	if !strings.Contains(err.Error(), "auto-download supports linux") {
+		t.Fatalf("downloadAsset error = %v, want unsupported-platform error", err)
+	}
+}
+
+func TestDownloadAssetPinnedVersionSkipsLatestRelease(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-binary"
+	const sha = "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest":
+			t.Fatalf("pinned version unexpectedly requested latest release metadata")
+		case "/v1.2.3/checksums.txt":
+			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
+		case "/v1.2.3/vialite-linux-arm64":
+			_, _ = w.Write([]byte(body))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	path, err := downloadAsset(context.Background(), Options{Version: "v1.2.3", Mirror: srv.URL}, assetKindBinary)
+	if err != nil {
+		t.Fatalf("downloadAsset pinned: %v", err)
+	}
+	if !strings.Contains(path, filepath.Join("vialite", "v1.2.3", sha)) {
+		t.Fatalf("download path = %q, want pinned version and checksum", path)
+	}
+}
