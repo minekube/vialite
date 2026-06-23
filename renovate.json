@@ -21,8 +21,8 @@
       "matchStrings": [
         "^(?<currentDigest>[a-f0-9]{40})\\s*$"
       ],
-      "depNameTemplate": "RaphiMC/ViaProxy",
-      "packageNameTemplate": "https://github.com/RaphiMC/ViaProxy",
+      "depNameTemplate": "ViaVersion/ViaProxy",
+      "packageNameTemplate": "https://github.com/ViaVersion/ViaProxy",
       "datasourceTemplate": "git-refs",
       "currentValueTemplate": "master"
     },
@@ -43,7 +43,7 @@
         "custom.regex"
       ],
       "matchDepNames": [
-        "RaphiMC/ViaProxy"
+        "ViaVersion/ViaProxy"
       ],
       "groupName": "ViaProxy upstream",
       "commitMessagePrefix": "fix(deps):",
