@@ -183,6 +183,70 @@ func TestSubprocessRunnerRestartsFailedProcess(t *testing.T) {
 	cancel()
 }
 
+func TestSubprocessRunnerAddsAndRemovesDynamicBackend(t *testing.T) {
+	bin := buildSubprocessHelper(t)
+
+	opts, err := Options{
+		Mode:                 ModeSubprocess,
+		BinaryPath:           bin,
+		AllowDynamicBackends: true,
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	if err := srv.WaitReady(context.Background()); err != nil {
+		cancel()
+		t.Fatalf("WaitReady: %v", err)
+	}
+	addr, err := srv.AddBackend(context.Background(), Backend{Name: "session-1", Address: "127.0.0.1:25566"})
+	if err != nil {
+		cancel()
+		t.Fatalf("AddBackend: %v", err)
+	}
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		cancel()
+		t.Fatalf("dial dynamic backend address %s: %v", addr, err)
+	}
+	_ = conn.Close()
+	if err := srv.RemoveBackend(context.Background(), "SESSION-1"); err != nil {
+		cancel()
+		t.Fatalf("RemoveBackend: %v", err)
+	}
+	eventuallyNotDialable(t, addr)
+	if err := srv.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Start returned %v, want nil", err)
+	}
+	cancel()
+}
+
+func eventuallyNotDialable(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		select {
+		case <-deadline:
+			t.Fatalf("backend address %s is still dialable", addr)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
 func buildSubprocessHelper(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

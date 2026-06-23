@@ -45,7 +45,10 @@ type Options struct {
 	RestartPolicy   *RestartPolicy
 	ShutdownTimeout time.Duration
 
-	Backends []Backend
+	// AllowDynamicBackends permits subprocess mode to start without static
+	// backends so callers can register translated backends at runtime.
+	AllowDynamicBackends bool
+	Backends             []Backend
 }
 
 // Backend describes a translated backend server.
@@ -65,19 +68,20 @@ type RestartPolicy struct {
 }
 
 var (
-	ErrInvalidMode             = errors.New("vialite: invalid mode")
-	ErrBackendRequired         = errors.New("vialite: at least one backend is required")
-	ErrBackendNameRequired     = errors.New("vialite: backend name is required")
-	ErrDuplicateBackend        = errors.New("vialite: duplicate backend name")
-	ErrBackendAddressRequired  = errors.New("vialite: backend address is required")
-	ErrInvalidBackendAddress   = errors.New("vialite: invalid backend address")
-	ErrInvalidForwardingMode   = errors.New("vialite: invalid forwarding mode")
-	ErrNotStarted              = errors.New("vialite: server not started")
-	ErrAlreadyStarted          = errors.New("vialite: server already started")
-	ErrNotReady                = errors.New("vialite: server not ready")
-	ErrBackendNotFound         = errors.New("vialite: backend not found")
-	ErrNoBinary                = errors.New("vialite: native binary not found")
-	ErrNoLibrary               = errors.New("vialite: native library not found")
-	ErrUnsupportedEmbeddedMode = errors.New("vialite: embedded mode is unsupported on this platform")
-	ErrInvalidChecksum         = errors.New("vialite: invalid checksum")
+	ErrInvalidMode                = errors.New("vialite: invalid mode")
+	ErrBackendRequired            = errors.New("vialite: at least one backend is required")
+	ErrBackendNameRequired        = errors.New("vialite: backend name is required")
+	ErrDuplicateBackend           = errors.New("vialite: duplicate backend name")
+	ErrBackendAddressRequired     = errors.New("vialite: backend address is required")
+	ErrInvalidBackendAddress      = errors.New("vialite: invalid backend address")
+	ErrInvalidForwardingMode      = errors.New("vialite: invalid forwarding mode")
+	ErrNotStarted                 = errors.New("vialite: server not started")
+	ErrAlreadyStarted             = errors.New("vialite: server already started")
+	ErrNotReady                   = errors.New("vialite: server not ready")
+	ErrBackendNotFound            = errors.New("vialite: backend not found")
+	ErrDynamicBackendsUnsupported = errors.New("vialite: dynamic backends are unsupported")
+	ErrNoBinary                   = errors.New("vialite: native binary not found")
+	ErrNoLibrary                  = errors.New("vialite: native library not found")
+	ErrUnsupportedEmbeddedMode    = errors.New("vialite: embedded mode is unsupported on this platform")
+	ErrInvalidChecksum            = errors.New("vialite: invalid checksum")
 )

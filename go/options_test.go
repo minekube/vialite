@@ -83,6 +83,22 @@ func TestOptionsValidateKeepsExplicitValues(t *testing.T) {
 	}
 }
 
+func TestOptionsValidateAllowsDynamicSubprocessWithoutBackends(t *testing.T) {
+	opts, err := Options{
+		Mode:                 ModeSubprocess,
+		AllowDynamicBackends: true,
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate returned error: %v", err)
+	}
+	if !opts.AllowDynamicBackends {
+		t.Fatal("AllowDynamicBackends = false")
+	}
+	if len(opts.Backends) != 0 {
+		t.Fatalf("Backends = %d, want 0", len(opts.Backends))
+	}
+}
+
 func TestOptionsValidateErrors(t *testing.T) {
 	tests := []struct {
 		name string

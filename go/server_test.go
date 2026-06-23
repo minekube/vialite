@@ -171,6 +171,44 @@ func TestServerWaitReadyReturnsStartupError(t *testing.T) {
 	}
 }
 
+func TestServerAddAndRemoveBackend(t *testing.T) {
+	fr := &fakeRunner{started: make(chan struct{}), backends: map[string]string{}}
+	srv := &Server{runner: fr, opts: Options{AllowDynamicBackends: true}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+	<-fr.started
+	if err := srv.WaitReady(context.Background()); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	addr, err := srv.AddBackend(context.Background(), Backend{Name: "Lobby", Address: "127.0.0.1:25566"})
+	if err != nil {
+		t.Fatalf("AddBackend: %v", err)
+	}
+	if addr != "127.0.0.1:41000" {
+		t.Fatalf("AddBackend address = %q", addr)
+	}
+	got, err := srv.BackendDialAddress("lobby")
+	if err != nil {
+		t.Fatalf("BackendDialAddress: %v", err)
+	}
+	if got != addr {
+		t.Fatalf("BackendDialAddress = %q, want %q", got, addr)
+	}
+	if err := srv.RemoveBackend(context.Background(), "LOBBY"); err != nil {
+		t.Fatalf("RemoveBackend: %v", err)
+	}
+	if _, err := srv.BackendDialAddress("lobby"); !errors.Is(err, ErrBackendNotFound) {
+		t.Fatalf("BackendDialAddress after remove = %v, want ErrBackendNotFound", err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Start returned %v, want nil", err)
+	}
+}
+
 type fakeRunner struct {
 	started  chan struct{}
 	ready    chan struct{}
@@ -206,4 +244,22 @@ func (f *fakeRunner) backendAddress(name string) (string, error) {
 		return "", ErrBackendNotFound
 	}
 	return addr, nil
+}
+
+func (f *fakeRunner) addBackend(ctx context.Context, backend Backend) (string, error) {
+	if f.backends == nil {
+		f.backends = map[string]string{}
+	}
+	addr := "127.0.0.1:41000"
+	storeBackendAddress(f.backends, backend.Name, addr)
+	return addr, nil
+}
+
+func (f *fakeRunner) removeBackend(ctx context.Context, name string) error {
+	if _, ok := f.backends[backendLookupName(name)]; !ok {
+		return ErrBackendNotFound
+	}
+	delete(f.backends, name)
+	delete(f.backends, backendLookupName(name))
+	return nil
 }
