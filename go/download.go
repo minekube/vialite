@@ -94,7 +94,7 @@ func downloadAsset(ctx context.Context, opts Options, kind assetKind) (string, e
 func resolveDownloadVersion(ctx context.Context, opts Options) (string, error) {
 	version := strings.TrimSpace(opts.Version)
 	if version == "" && opts.Mirror != "" {
-		return DefaultVersion, nil
+		return DefaultMirrorVersion, nil
 	}
 	if !latestVersionRequested(version) {
 		return version, nil

@@ -233,8 +233,8 @@ func TestDownloadAssetAutoVersionUsesLatestRelease(t *testing.T) {
 			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
 		case "/v9.9.9/vialite-linux-arm64":
 			_, _ = w.Write([]byte(body))
-		case "/" + DefaultVersion + "/checksums.txt":
-			t.Fatalf("empty version used DefaultVersion instead of latest release")
+		case "/" + DefaultMirrorVersion + "/checksums.txt":
+			t.Fatalf("explicit auto version used DefaultMirrorVersion instead of latest release")
 		default:
 			http.NotFound(w, r)
 		}
@@ -255,7 +255,7 @@ func TestDownloadAssetAutoVersionUsesLatestRelease(t *testing.T) {
 	}
 }
 
-func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultVersion(t *testing.T) {
+func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultMirrorVersion(t *testing.T) {
 	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
 	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
 	t.Cleanup(func() {
@@ -268,9 +268,9 @@ func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/latest":
 			t.Fatalf("empty custom-mirror version unexpectedly requested latest release metadata")
-		case "/" + DefaultVersion + "/checksums.txt":
+		case "/" + DefaultMirrorVersion + "/checksums.txt":
 			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
-		case "/" + DefaultVersion + "/vialite-linux-arm64":
+		case "/" + DefaultMirrorVersion + "/vialite-linux-arm64":
 			_, _ = w.Write([]byte(body))
 		default:
 			http.NotFound(w, r)
@@ -284,8 +284,8 @@ func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downloadAsset empty mirror version: %v", err)
 	}
-	if !strings.Contains(path, filepath.Join("vialite", DefaultVersion, sha)) {
-		t.Fatalf("download path = %q, want default version and checksum", path)
+	if !strings.Contains(path, filepath.Join("vialite", DefaultMirrorVersion, sha)) {
+		t.Fatalf("download path = %q, want default mirror version and checksum", path)
 	}
 }
 
