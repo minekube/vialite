@@ -10,7 +10,7 @@ import (
 func TestConfigToOptions(t *testing.T) {
 	opts, err := Config{
 		Enabled:      true,
-		Mode:         "embedded",
+		Mode:         "subprocess",
 		GateProtocol: "1.26",
 		Bind:         "127.0.0.1:25590",
 		Backends: []BackendConfig{{
@@ -23,7 +23,7 @@ func TestConfigToOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toOptions: %v", err)
 	}
-	if opts.Mode != vialite.ModeEmbedded {
+	if opts.Mode != vialite.ModeSubprocess {
 		t.Fatalf("Mode = %v", opts.Mode)
 	}
 	if opts.GateProtocol != "1.26" || opts.Bind != "127.0.0.1:25590" {
@@ -34,10 +34,29 @@ func TestConfigToOptions(t *testing.T) {
 	}
 }
 
-func TestConfigToOptionsSubprocessLegacy(t *testing.T) {
+func TestConfigToOptionsDefaultsSubprocess(t *testing.T) {
+	opts, err := Config{Enabled: true}.toOptions(nil)
+	if err != nil {
+		t.Fatalf("toOptions: %v", err)
+	}
+	if opts.Mode != vialite.ModeSubprocess {
+		t.Fatalf("Mode = %v", opts.Mode)
+	}
+}
+
+func TestConfigToOptionsEmbedded(t *testing.T) {
+	opts, err := Config{Enabled: true, Mode: "embedded"}.toOptions(nil)
+	if err != nil {
+		t.Fatalf("toOptions: %v", err)
+	}
+	if opts.Mode != vialite.ModeEmbedded {
+		t.Fatalf("Mode = %v", opts.Mode)
+	}
+}
+
+func TestConfigToOptionsLegacyForwarding(t *testing.T) {
 	opts, err := Config{
 		Enabled: true,
-		Mode:    "subprocess",
 		Backends: []BackendConfig{{
 			Name:       "legacy",
 			Address:    "127.0.0.1:25567",
@@ -47,9 +66,6 @@ func TestConfigToOptionsSubprocessLegacy(t *testing.T) {
 	}.toOptions(nil)
 	if err != nil {
 		t.Fatalf("toOptions: %v", err)
-	}
-	if opts.Mode != vialite.ModeSubprocess {
-		t.Fatalf("Mode = %v", opts.Mode)
 	}
 	if opts.Backends[0].Forwarding != vialite.ForwardingLegacy {
 		t.Fatalf("Forwarding = %q", opts.Backends[0].Forwarding)

@@ -50,10 +50,10 @@ func (c Config) toOptions(logger *slog.Logger) (vialite.Options, error) {
 		Backends:     make([]vialite.Backend, 0, len(c.Backends)),
 	}
 	switch strings.ToLower(c.Mode) {
-	case "", "embedded":
-		opts.Mode = vialite.ModeEmbedded
-	case "subprocess":
+	case "", "subprocess":
 		opts.Mode = vialite.ModeSubprocess
+	case "embedded":
+		opts.Mode = vialite.ModeEmbedded
 	default:
 		return vialite.Options{}, fmt.Errorf("%w: %s", ErrInvalidMode, c.Mode)
 	}

@@ -13,7 +13,7 @@ Embedded mode resolves `libvialite.so` in this order:
 If `Options.Version` is empty, `auto`, or `latest`, auto-download first
 resolves the latest stable `minekube/vialite` release and then verifies the
 downloaded artifact against that release's `checksums.txt`. Set
-`Options.Version` to an exact tag, such as `v0.2.5`, to pin the artifact. Custom
+`Options.Version` to an exact tag, such as `v0.2.6`, to pin the artifact. Custom
 mirrors with an empty `Options.Version` use vialite's pinned mirror fallback
 release; custom mirrors that use `auto` or `latest` must expose `/latest` JSON
 containing a `tag_name` field.
