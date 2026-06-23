@@ -16,12 +16,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
-import net.lenni0451.lambdaevents.EventHandler;
 import net.raphimc.netminecraft.netty.connection.NetServer;
 import net.raphimc.viaproxy.ViaProxy;
-import net.raphimc.viaproxy.plugins.PluginManager;
-import net.raphimc.viaproxy.plugins.events.Client2ProxyHandlerCreationEvent;
 import net.raphimc.viaproxy.plugins.events.PreConnectEvent;
 import net.raphimc.viaproxy.protocoltranslator.ProtocolTranslator;
 import net.raphimc.viaproxy.protocoltranslator.viaproxy.ViaProxyConfig;
@@ -45,6 +43,7 @@ public final class VialiteBridge {
     private static final Map<Integer, BackendRoute> ROUTES_BY_LOCAL_PORT = new ConcurrentHashMap<>();
     private static final List<NetServer> SERVERS = new ArrayList<>();
     private static final RouteEventHandler ROUTE_EVENT_HANDLER = new RouteEventHandler();
+    private static final Consumer<PreConnectEvent> ROUTE_EVENT_CONSUMER = ROUTE_EVENT_HANDLER::onPreConnect;
 
     private VialiteBridge() {
     }
@@ -77,7 +76,7 @@ public final class VialiteBridge {
             shutdownServers();
             initializeViaProxy(nativeConfig);
 
-            ViaProxy.EVENT_MANAGER.unregister(ROUTE_EVENT_HANDLER);
+            ViaProxy.EVENT_MANAGER.unregisterConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
             ROUTES_BY_LOCAL_PORT.clear();
             BACKEND_ADDRESSES.clear();
 
@@ -96,7 +95,7 @@ public final class VialiteBridge {
                 ROUTES_BY_LOCAL_PORT.put(inetSocketAddress.getPort(), route);
             }
 
-            ViaProxy.EVENT_MANAGER.register(ROUTE_EVENT_HANDLER);
+            ViaProxy.EVENT_MANAGER.registerConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
             INITIALIZED.set(true);
             return 0;
         } catch (Throwable t) {
@@ -149,7 +148,7 @@ public final class VialiteBridge {
     }
 
     private static Supplier<ChannelHandler> clientHandlerSupplier() {
-        return () -> ViaProxy.EVENT_MANAGER.call(new Client2ProxyHandlerCreationEvent(new Client2ProxyHandler(), false)).getHandler();
+        return Client2ProxyHandler::new;
     }
 
     private static synchronized void initializeViaProxy(NativeConfig nativeConfig) throws Exception {
@@ -162,7 +161,7 @@ public final class VialiteBridge {
         Method loadNetty = ViaProxy.class.getDeclaredMethod("loadNetty");
         loadNetty.setAccessible(true);
         loadNetty.invoke(null);
-        setStatic(ViaProxy.class, "PLUGIN_MANAGER", new PluginManager());
+        setStatic(ViaProxy.class, "PLUGIN_MANAGER", null);
         setStatic(ViaProxy.class, "SAVE_MANAGER", new SaveManager());
         ViaProxyConfig config = ViaProxyConfig.create(new File(cwd, "viaproxy.yml"));
         configureViaProxy(config, nativeConfig);
@@ -254,7 +253,6 @@ public final class VialiteBridge {
     }
 
     public static final class RouteEventHandler {
-        @EventHandler(events = PreConnectEvent.class)
         public void onPreConnect(PreConnectEvent event) {
             SocketAddress local = event.getClientChannel().localAddress();
             if (!(local instanceof InetSocketAddress inetSocketAddress)) {

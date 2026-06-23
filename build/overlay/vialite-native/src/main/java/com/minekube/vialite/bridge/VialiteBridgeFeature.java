@@ -24,6 +24,13 @@ public final class VialiteBridgeFeature implements Feature {
         registerAll(access.findClassByName("com.minekube.vialite.bridge.VialiteBridge$NativeBackend"));
         registerAll(access.findClassByName("com.minekube.vialite.bridge.VialiteBridge$RouteEventHandler"));
         registerAll(access.findClassByName("com.minekube.vialite.bridge.VialiteBridge$BackendRoute"));
+        registerAll(access.findClassByName("net.raphimc.viaproxy.protocoltranslator.viaproxy.ViaProxyConfig"));
+        registerAll(access.findClassByName("net.raphimc.viaproxy.util.config.AccountTypeSerializer"));
+        registerAll(access.findClassByName("net.raphimc.viaproxy.util.config.ProtocolVersionTypeSerializer"));
+        registerAll(access.findClassByName("net.raphimc.viaproxy.util.config.ProxyTypeSerializer"));
+        registerAll(access.findClassByName("net.raphimc.viaproxy.util.config.SocketAddressTypeSerializer"));
+        registerAll(access.findClassByName("net.raphimc.viaproxy.util.config.TargetAddressTypeSerializer"));
+        registerAll(access.findClassByName("com.viaversion.viaversion.protocols.v1_12_2to1_13.data.RecipeData$Recipe"));
     }
 
     private static void registerAll(Class<?> type) {
