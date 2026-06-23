@@ -34,7 +34,7 @@ func (o Options) validate() (Options, error) {
 		o.ShutdownTimeout = 30 * time.Second
 	}
 	if len(o.Backends) == 0 {
-		if o.AllowDynamicBackends && o.Mode == ModeSubprocess {
+		if o.AllowDynamicBackends {
 			return o, nil
 		}
 		return o, ErrBackendRequired

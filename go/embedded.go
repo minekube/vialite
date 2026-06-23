@@ -2,6 +2,7 @@ package vialite
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
@@ -9,6 +10,10 @@ import (
 type embeddedRunner struct {
 	healthy  atomic.Bool
 	backends map[string]string
+
+	mu      sync.Mutex
+	symbols *nativeSymbols
+	thread  unsafe.Pointer
 }
 
 func (r *embeddedRunner) run(ctx context.Context, s *Server) error {
@@ -41,9 +46,20 @@ func (r *embeddedRunner) run(ctx context.Context, s *Server) error {
 		}
 		storeBackendAddress(r.backends, backend.Name, addr)
 	}
+	r.mu.Lock()
+	r.symbols = symbols
+	r.thread = thread
+	r.mu.Unlock()
 	r.healthy.Store(true)
 	s.markReady(nil)
-	defer r.healthy.Store(false)
+	defer func() {
+		r.mu.Lock()
+		r.symbols = nil
+		r.thread = nil
+		r.backends = nil
+		r.mu.Unlock()
+		r.healthy.Store(false)
+	}()
 
 	return r.runNative(ctx, symbols, thread)
 }
@@ -53,6 +69,8 @@ func (r *embeddedRunner) isHealthy() bool {
 }
 
 func (r *embeddedRunner) backendAddress(name string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	addr, ok := r.backends[name]
 	if !ok {
 		addr, ok = r.backends[backendLookupName(name)]
@@ -63,12 +81,64 @@ func (r *embeddedRunner) backendAddress(name string) (string, error) {
 	return addr, nil
 }
 
-func (r *embeddedRunner) addBackend(context.Context, Backend) (string, error) {
-	return "", ErrDynamicBackendsUnsupported
+func (r *embeddedRunner) addBackend(ctx context.Context, backend Backend) (string, error) {
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+	}
+	data, err := nativeBackendConfigJSON(backend, "")
+	if err != nil {
+		return "", err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.symbols == nil || r.thread == nil || !r.healthy.Load() {
+		return "", ErrNotStarted
+	}
+	key := backendLookupName(backend.Name)
+	if _, ok := r.backends[key]; ok {
+		return "", ErrDuplicateBackend
+	}
+	addr := r.symbols.addBackend(r.thread, string(data))
+	if addr == "" {
+		return "", ErrBackendNotFound
+	}
+	if r.backends == nil {
+		r.backends = make(map[string]string)
+	}
+	storeBackendAddress(r.backends, backend.Name, addr)
+	return addr, nil
 }
 
-func (r *embeddedRunner) removeBackend(context.Context, string) error {
-	return ErrDynamicBackendsUnsupported
+func (r *embeddedRunner) removeBackend(ctx context.Context, name string) error {
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.symbols == nil || r.thread == nil || !r.healthy.Load() {
+		return ErrNotStarted
+	}
+	key := backendLookupName(name)
+	if _, ok := r.backends[key]; !ok {
+		return ErrBackendNotFound
+	}
+	if code := r.symbols.removeBackend(r.thread, name); code != 0 {
+		return ErrBackendNotFound
+	}
+	for alias := range r.backends {
+		if backendLookupName(alias) == key {
+			delete(r.backends, alias)
+		}
+	}
+	return nil
 }
 
 func (r *embeddedRunner) runNative(ctx context.Context, symbols *nativeSymbols, thread unsafe.Pointer) error {

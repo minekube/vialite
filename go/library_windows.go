@@ -22,5 +22,7 @@ func loadNativeSymbols(path string) (*nativeSymbols, error) {
 	purego.RegisterLibFunc(&s.shutdown, lib, "vialite_shutdown")
 	purego.RegisterLibFunc(&s.status, lib, "vialite_status")
 	purego.RegisterLibFunc(&s.backendAddress, lib, "vialite_backend_address")
+	purego.RegisterLibFunc(&s.addBackend, lib, "vialite_add_backend")
+	purego.RegisterLibFunc(&s.removeBackend, lib, "vialite_remove_backend")
 	return s, nil
 }

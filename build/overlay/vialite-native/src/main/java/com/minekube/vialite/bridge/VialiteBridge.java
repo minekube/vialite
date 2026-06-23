@@ -41,9 +41,11 @@ public final class VialiteBridge {
     private static final AtomicBoolean VIAPROXY_INITIALIZED = new AtomicBoolean(false);
     private static final Map<String, String> BACKEND_ADDRESSES = new ConcurrentHashMap<>();
     private static final Map<Integer, BackendRoute> ROUTES_BY_LOCAL_PORT = new ConcurrentHashMap<>();
-    private static final List<NetServer> SERVERS = new ArrayList<>();
+    private static final Map<String, NetServer> SERVERS_BY_BACKEND = new ConcurrentHashMap<>();
     private static final RouteEventHandler ROUTE_EVENT_HANDLER = new RouteEventHandler();
     private static final Consumer<PreConnectEvent> ROUTE_EVENT_CONSUMER = ROUTE_EVENT_HANDLER::onPreConnect;
+    private static NativeConfig activeConfig;
+    private static ForwardingMode activeForwardingMode = ForwardingMode.NONE;
 
     private VialiteBridge() {
     }
@@ -69,7 +71,7 @@ public final class VialiteBridge {
     private static synchronized int initConfig(String config) {
         try {
             NativeConfig nativeConfig = GSON.fromJson(config, NativeConfig.class);
-            if (nativeConfig == null || nativeConfig.backends == null || nativeConfig.backends.isEmpty()) {
+            if (nativeConfig == null) {
                 return 3;
             }
 
@@ -80,21 +82,17 @@ public final class VialiteBridge {
             ROUTES_BY_LOCAL_PORT.clear();
             BACKEND_ADDRESSES.clear();
 
-            for (NativeBackend backend : nativeConfig.backends) {
-                BackendRoute route = BackendRoute.from(backend);
-                NetServer server = new NetServer(new Client2ProxyChannelInitializer(clientHandlerSupplier()));
-                server.bind(AddressUtil.parse(bindAddress(nativeConfig, backend), null), false);
-                SocketAddress localAddress = server.getChannel().localAddress();
-                if (!(localAddress instanceof InetSocketAddress inetSocketAddress)) {
-                    server.getChannel().close().syncUninterruptibly();
-                    return 4;
+            if (nativeConfig.backends != null) {
+                for (NativeBackend backend : nativeConfig.backends) {
+                    if (addBackend(nativeConfig, backend) == null) {
+                        shutdownServers();
+                        ViaProxy.EVENT_MANAGER.unregisterConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
+                        return 4;
+                    }
                 }
-                String address = dialAddress(inetSocketAddress);
-                SERVERS.add(server);
-                putBackendAddress(backend.name, address);
-                ROUTES_BY_LOCAL_PORT.put(inetSocketAddress.getPort(), route);
             }
 
+            activeConfig = nativeConfig;
             ViaProxy.EVENT_MANAGER.registerConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
             INITIALIZED.set(true);
             return 0;
@@ -102,6 +100,7 @@ public final class VialiteBridge {
             t.printStackTrace(System.err);
             shutdownServers();
             INITIALIZED.set(false);
+            activeConfig = null;
             return 1;
         }
     }
@@ -147,6 +146,35 @@ public final class VialiteBridge {
         return CTypeConversion.toCString(address).get();
     }
 
+    @CEntryPoint(name = "vialite_add_backend")
+    public static synchronized CCharPointer addBackend(IsolateThread thread, CCharPointer backendJson) {
+        String address = "";
+        try {
+            if (!INITIALIZED.get() || activeConfig == null) {
+                return CTypeConversion.toCString(address).get();
+            }
+            NativeBackend backend = GSON.fromJson(CTypeConversion.toJavaString(backendJson), NativeBackend.class);
+            address = addBackend(activeConfig, backend);
+            if (address == null) {
+                address = "";
+            }
+        } catch (Throwable t) {
+            t.printStackTrace(System.err);
+            address = "";
+        }
+        return CTypeConversion.toCString(address).get();
+    }
+
+    @CEntryPoint(name = "vialite_remove_backend")
+    public static synchronized int removeBackend(IsolateThread thread, CCharPointer backendName) {
+        try {
+            return removeBackend(CTypeConversion.toJavaString(backendName)) ? 0 : 1;
+        } catch (Throwable t) {
+            t.printStackTrace(System.err);
+            return 1;
+        }
+    }
+
     private static Supplier<ChannelHandler> clientHandlerSupplier() {
         return Client2ProxyHandler::new;
     }
@@ -174,13 +202,18 @@ public final class VialiteBridge {
         ForwardingMode forwardingMode = forwardingMode(nativeConfig);
         config.setProxyOnlineMode(false);
         config.setAuthMethod(ViaProxyConfig.AuthMethod.NONE);
-        config.setPassthroughBungeecordPlayerInfo(forwardingMode == ForwardingMode.LEGACY);
+        configureForwardingMode(config, forwardingMode);
         config.setRewriteHandshakePacket(true);
         config.setRewriteTransferPackets(true);
         config.setCompressionThreshold(256);
         config.setIgnoreProtocolTranslationErrors(false);
         config.setSuppressClientProtocolErrors(false);
         config.setAllowLegacyClientPassthrough(false);
+    }
+
+    private static void configureForwardingMode(ViaProxyConfig config, ForwardingMode forwardingMode) {
+        config.setPassthroughBungeecordPlayerInfo(forwardingMode == ForwardingMode.LEGACY);
+        activeForwardingMode = forwardingMode;
     }
 
     private static void setStatic(Class<?> type, String fieldName, Object value) throws Exception {
@@ -191,6 +224,9 @@ public final class VialiteBridge {
 
     private static ForwardingMode forwardingMode(NativeConfig nativeConfig) {
         ForwardingMode mode = null;
+        if (nativeConfig.backends == null) {
+            return ForwardingMode.NONE;
+        }
         for (NativeBackend backend : nativeConfig.backends) {
             ForwardingMode backendMode = ForwardingMode.from(backend.forwarding);
             if (mode == null) {
@@ -221,6 +257,24 @@ public final class VialiteBridge {
         BACKEND_ADDRESSES.put(normalizeBackendName(name), address);
     }
 
+    private static void removeBackendAddress(String name) {
+        if (name == null) {
+            return;
+        }
+        String normalized = normalizeBackendName(name);
+        BACKEND_ADDRESSES.remove(name);
+        BACKEND_ADDRESSES.remove(normalized);
+        List<String> aliases = new ArrayList<>();
+        for (String alias : BACKEND_ADDRESSES.keySet()) {
+            if (normalizeBackendName(alias).equals(normalized)) {
+                aliases.add(alias);
+            }
+        }
+        for (String alias : aliases) {
+            BACKEND_ADDRESSES.remove(alias);
+        }
+    }
+
     private static String normalizeBackendName(String name) {
         return name == null ? "" : name.trim().toLowerCase(java.util.Locale.ROOT);
     }
@@ -236,8 +290,69 @@ public final class VialiteBridge {
         return host + ":" + address.getPort();
     }
 
+    private static synchronized String addBackend(NativeConfig nativeConfig, NativeBackend backend) {
+        if (backend == null || backend.name == null || backend.name.isBlank()) {
+            throw new IllegalArgumentException("Backend name is required");
+        }
+        String key = normalizeBackendName(backend.name);
+        if (SERVERS_BY_BACKEND.containsKey(key)) {
+            throw new IllegalArgumentException("Duplicate backend name: " + backend.name);
+        }
+        ForwardingMode backendForwardingMode = ForwardingMode.from(backend.forwarding);
+        if (SERVERS_BY_BACKEND.isEmpty()) {
+            configureForwardingMode(ViaProxy.getConfig(), backendForwardingMode);
+        } else if (activeForwardingMode != backendForwardingMode) {
+            throw new IllegalArgumentException("Mixed backend forwarding modes are not supported by vialite native runtime");
+        }
+        BackendRoute route = BackendRoute.from(backend);
+        NetServer server = new NetServer(new Client2ProxyChannelInitializer(clientHandlerSupplier()));
+        try {
+            server.bind(AddressUtil.parse(bindAddress(nativeConfig, backend), null), false);
+            SocketAddress localAddress = server.getChannel().localAddress();
+            if (!(localAddress instanceof InetSocketAddress inetSocketAddress)) {
+                server.getChannel().close().syncUninterruptibly();
+                return null;
+            }
+            String address = dialAddress(inetSocketAddress);
+            SERVERS_BY_BACKEND.put(key, server);
+            putBackendAddress(backend.name, address);
+            ROUTES_BY_LOCAL_PORT.put(inetSocketAddress.getPort(), route);
+            return address;
+        } catch (Throwable t) {
+            try {
+                Channel channel = server.getChannel();
+                if (channel != null) {
+                    channel.close().syncUninterruptibly();
+                }
+            } catch (Throwable ignored) {
+            }
+            throw t;
+        }
+    }
+
+    private static synchronized boolean removeBackend(String backendName) {
+        String key = normalizeBackendName(backendName);
+        NetServer server = SERVERS_BY_BACKEND.remove(key);
+        if (server == null) {
+            return false;
+        }
+        try {
+            Channel channel = server.getChannel();
+            if (channel != null) {
+                SocketAddress localAddress = channel.localAddress();
+                if (localAddress instanceof InetSocketAddress inetSocketAddress) {
+                    ROUTES_BY_LOCAL_PORT.remove(inetSocketAddress.getPort());
+                }
+                channel.close().syncUninterruptibly();
+            }
+        } finally {
+            removeBackendAddress(backendName);
+        }
+        return true;
+    }
+
     private static synchronized void shutdownServers() {
-        for (NetServer server : SERVERS) {
+        for (NetServer server : SERVERS_BY_BACKEND.values()) {
             try {
                 Channel channel = server.getChannel();
                 if (channel != null) {
@@ -246,9 +361,11 @@ public final class VialiteBridge {
             } catch (Throwable ignored) {
             }
         }
-        SERVERS.clear();
+        SERVERS_BY_BACKEND.clear();
         ROUTES_BY_LOCAL_PORT.clear();
         BACKEND_ADDRESSES.clear();
+        activeConfig = null;
+        activeForwardingMode = ForwardingMode.NONE;
         INITIALIZED.set(false);
     }
 

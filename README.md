@@ -104,5 +104,7 @@ vialite/
 └── .github/workflows/    # CI, native build, release automation
 ```
 
-See [docs/architecture.md](docs/architecture.md) and
-[docs/gate.md](docs/gate.md) for the detailed integration model.
+See [docs/architecture.md](docs/architecture.md),
+[docs/gate.md](docs/gate.md), and
+[docs/dynamic-backends.md](docs/dynamic-backends.md) for the detailed
+integration model.

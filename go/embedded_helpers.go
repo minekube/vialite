@@ -22,4 +22,6 @@ type nativeSymbols struct {
 	shutdown        func(unsafe.Pointer) int
 	status          func(unsafe.Pointer) int
 	backendAddress  func(unsafe.Pointer, string) string
+	addBackend      func(unsafe.Pointer, string) string
+	removeBackend   func(unsafe.Pointer, string) int
 }
