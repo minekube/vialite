@@ -194,9 +194,6 @@ public final class VialiteBridge {
         ForwardingMode mode = null;
         for (NativeBackend backend : nativeConfig.backends) {
             ForwardingMode backendMode = ForwardingMode.from(backend.forwarding);
-            if (backendMode == ForwardingMode.VELOCITY) {
-                throw new UnsupportedOperationException("Velocity forwarding is not supported by vialite native runtime yet");
-            }
             if (mode == null) {
                 mode = backendMode;
             } else if (mode != backendMode) {
