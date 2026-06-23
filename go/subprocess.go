@@ -21,6 +21,7 @@ type subprocessRunner struct {
 	bin     string
 	opts    Options
 	dynamic map[string]*subprocessBackendProcess
+	adding  map[string]struct{}
 }
 
 type subprocessBackendProcess struct {
@@ -59,6 +60,9 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 	}
 	if r.dynamic == nil {
 		r.dynamic = make(map[string]*subprocessBackendProcess)
+	}
+	if r.adding == nil {
+		r.adding = make(map[string]struct{})
 	}
 	r.mu.Unlock()
 
@@ -236,37 +240,39 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 		r.mu.Unlock()
 		return "", fmt.Errorf("%w: %s", ErrDuplicateBackend, backend.Name)
 	}
+	if _, ok := r.adding[key]; ok {
+		r.mu.Unlock()
+		return "", fmt.Errorf("%w: %s", ErrDuplicateBackend, backend.Name)
+	}
 	bin := r.bin
 	opts := r.opts
-	if r.dynamic == nil {
-		r.dynamic = make(map[string]*subprocessBackendProcess)
+	if r.adding == nil {
+		r.adding = make(map[string]struct{})
 	}
-	r.dynamic[key] = nil
+	r.adding[key] = struct{}{}
 	r.mu.Unlock()
 
-	cleanupReservation := func() {
+	cleanupAdding := func() {
 		r.mu.Lock()
-		if r.dynamic[key] == nil {
-			delete(r.dynamic, key)
-		}
+		delete(r.adding, key)
 		r.mu.Unlock()
 	}
 
 	addr, err := dynamicLoopbackBackendAddress(opts.Bind)
 	if err != nil {
-		cleanupReservation()
+		cleanupAdding()
 		return "", fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
 	}
 	binds := map[string]string{backend.Name: addr, key: addr}
 	opts.Backends = []Backend{backend}
 	config, err := opts.nativeConfigJSONWithBackendBinds(binds)
 	if err != nil {
-		cleanupReservation()
+		cleanupAdding()
 		return "", err
 	}
 	configPath, err := writeTempConfig(config)
 	if err != nil {
-		cleanupReservation()
+		cleanupAdding()
 		return "", err
 	}
 
@@ -274,7 +280,7 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		cleanupReservation()
+		cleanupAdding()
 		_ = os.Remove(configPath)
 		return "", err
 	}
@@ -285,6 +291,7 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 			_ = terminateProcess(cmd.Process)
 			<-done
 		}
+		cleanupAdding()
 		_ = os.Remove(configPath)
 		return "", err
 	}
@@ -304,10 +311,14 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 	}()
 
 	r.mu.Lock()
-	if current, ok := r.dynamic[key]; !ok || current != nil {
+	delete(r.adding, key)
+	if !r.healthy.Load() || r.bin == "" {
 		r.mu.Unlock()
 		_ = stopSubprocessBackend(context.Background(), proc, opts.ShutdownTimeout)
-		return "", ErrBackendNotFound
+		return "", ErrNotStarted
+	}
+	if r.dynamic == nil {
+		r.dynamic = make(map[string]*subprocessBackendProcess)
 	}
 	r.dynamic[key] = proc
 	storeBackendAddress(r.backends, backend.Name, addr)
@@ -385,6 +396,10 @@ func stopSubprocessBackend(ctx context.Context, proc *subprocessBackendProcess, 
 		}
 		return err
 	case <-ctx.Done():
+		if err := proc.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+		<-proc.done
 		return ctx.Err()
 	case <-time.After(shutdownTimeout):
 		if err := proc.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
