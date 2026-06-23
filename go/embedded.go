@@ -63,6 +63,14 @@ func (r *embeddedRunner) backendAddress(name string) (string, error) {
 	return addr, nil
 }
 
+func (r *embeddedRunner) addBackend(context.Context, Backend) (string, error) {
+	return "", ErrDynamicBackendsUnsupported
+}
+
+func (r *embeddedRunner) removeBackend(context.Context, string) error {
+	return ErrDynamicBackendsUnsupported
+}
+
 func (r *embeddedRunner) runNative(ctx context.Context, symbols *nativeSymbols, thread unsafe.Pointer) error {
 	done := make(chan error, 1)
 	go func() {

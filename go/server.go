@@ -27,6 +27,8 @@ type runner interface {
 	run(ctx context.Context, s *Server) error
 	isHealthy() bool
 	backendAddress(name string) (string, error)
+	addBackend(ctx context.Context, backend Backend) (string, error)
+	removeBackend(ctx context.Context, name string) error
 }
 
 var (
@@ -169,6 +171,33 @@ func (s *Server) BackendDialAddress(name string) (string, error) {
 		return "", err
 	}
 	return addr, nil
+}
+
+// AddBackend starts translating a backend registered after server startup and
+// returns the loopback address Gate should dial.
+func (s *Server) AddBackend(ctx context.Context, backend Backend) (string, error) {
+	if s == nil || !s.started.Load() {
+		return "", ErrNotStarted
+	}
+	if !s.ready.Load() {
+		return "", ErrNotReady
+	}
+	backend, err := normalizeBackend(backend)
+	if err != nil {
+		return "", err
+	}
+	return s.runner.addBackend(ctx, backend)
+}
+
+// RemoveBackend stops translating a backend registered with AddBackend.
+func (s *Server) RemoveBackend(ctx context.Context, name string) error {
+	if s == nil || !s.started.Load() {
+		return ErrNotStarted
+	}
+	if !s.ready.Load() {
+		return ErrNotReady
+	}
+	return s.runner.removeBackend(ctx, name)
 }
 
 func (s *Server) markReady(err error) {
