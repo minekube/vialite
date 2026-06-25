@@ -58,9 +58,10 @@ func TestEmbeddedRunNativeWaitsForRunAfterShutdown(t *testing.T) {
 func TestEmbeddedRunnerAddsAndRemovesDynamicBackend(t *testing.T) {
 	addedJSON := ""
 	removedName := ""
+	thread := new(byte)
 	r := &embeddedRunner{
 		backends: map[string]string{},
-		thread:   unsafe.Pointer(uintptr(1)),
+		thread:   unsafe.Pointer(thread),
 		symbols: &nativeSymbols{
 			addBackend: func(_ unsafe.Pointer, backendJSON string) string {
 				addedJSON = backendJSON

@@ -96,16 +96,16 @@ if err != nil {
 
 ```sh
 mise trust && mise install
-task setup
-task test
-task lint
+mise run setup
+mise run test
+mise run lint
 ```
 
 The native build path is scaffolded separately:
 
 ```sh
-task overlay:apply
-task build:native
+mise run overlay:apply
+mise run build:native
 ```
 
 ## Repository Layout

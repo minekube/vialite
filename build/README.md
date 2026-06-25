@@ -5,8 +5,8 @@ The native build reconstitutes ViaProxy from upstream at the pinned ref in
 builds a GraalVM shared library exposing the vialite C ABI.
 
 ```sh
-task overlay:apply
-task build:native
+mise run overlay:apply
+mise run build:native
 ```
 
 The overlay is additive. Do not maintain a hard fork of ViaProxy in this
