@@ -2,13 +2,62 @@
 go = "1.26"
 java = "graalvm-community-21"
 python = "3.14.5"
-"aqua:go-task/task" = "latest"
 "npm:markdownlint-cli2" = "latest"
 "pipx:yamllint" = "latest"
 "aqua:golangci/golangci-lint" = "latest"
+
+[vars]
+IMAGE_REPO = "ghcr.io/minekube/vialite"
 
 [env]
 GOPATH = "{{config_root}}/.cache/go"
 
 [settings]
 experimental = true
+
+[tasks.default]
+description = "list available tasks"
+run = "mise tasks"
+
+[tasks.setup]
+description = "install module dependencies"
+dir = "go"
+run = "go mod download"
+
+[tasks."test:go"]
+description = "run Go tests"
+dir = "go"
+run = "go test ./..."
+
+[tasks.test]
+description = "run all tests"
+depends = ["test:go"]
+
+[tasks."lint:go"]
+description = "run Go linter"
+dir = "go"
+run = "golangci-lint run"
+
+[tasks."lint:md"]
+description = "run markdown lint"
+run = "markdownlint-cli2 '**/*.md' '#.cache/**' '#build/.work/**'"
+
+[tasks."lint:yaml"]
+description = "run YAML lint"
+run = "yamllint ."
+
+[tasks.lint]
+description = "run all linters"
+depends = ["lint:go", "lint:md", "lint:yaml"]
+
+[tasks."overlay:apply"]
+description = "clone ViaProxy at the pinned ref and apply the vialite overlay"
+run = "bash build/apply-overlay.sh"
+
+[tasks."build:native"]
+description = "build vialite native image through Docker"
+run = "docker build -f build/Dockerfile --target shared -t {{vars.IMAGE_REPO}}:local-shared ."
+
+[tasks.pre-commit]
+description = "run checks used before pushing"
+depends = ["test", "lint"]
