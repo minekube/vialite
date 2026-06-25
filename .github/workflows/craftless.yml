@@ -1,0 +1,214 @@
+name: Craftless compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/craftless.yml'
+      - 'test/craftless/**'
+      - 'go/**'
+      - 'build/**'
+      - 'Taskfile.yml'
+      - 'mise.toml'
+  pull_request:
+    paths:
+      - '.github/workflows/craftless.yml'
+      - 'test/craftless/**'
+      - 'go/**'
+      - 'build/**'
+      - 'Taskfile.yml'
+      - 'mise.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CRAFTLESS_REPOSITORY: minekube/craftless
+  CRAFTLESS_REF: df55f652ce16052604c6776e0c50e9a29eb6ac66
+
+jobs:
+  validate-matrix:
+    name: validate Craftless matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check out vialite
+        uses: actions/checkout@v7
+
+      - name: Validate vialite target matrix
+        run: python3 test/craftless/validate-matrix.py test/craftless/matrix.json
+
+      - name: Build GitHub matrix from enabled rows
+        id: matrix
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("test/craftless/matrix.json").read_text())
+          include = []
+          for row in data["rows"]:
+              if row.get("enabled") is not True:
+                  continue
+              include.append(
+                  {
+                      "mode": row["mode"],
+                      "client-version": row["clientVersion"],
+                      "server-version": row["serverVersion"],
+                      "case": row["case"],
+                  }
+              )
+          print("matrix=" + json.dumps({"include": include}, separators=(",", ":")))
+          PY
+
+  build-subprocess-linux-amd64:
+    name: build PR subprocess linux amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read GraalVM image pin
+        id: pins
+        run: echo "graalvm=$(tr -d '[:space:]' < build/graalvm.version)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Linux amd64 native artifacts
+        run: |
+          docker build \
+            -f build/Dockerfile \
+            --build-arg GRAALVM_IMAGE="${{ steps.pins.outputs.graalvm }}" \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            --target executable \
+            -t ghcr.io/minekube/vialite:native-craftless-amd64 \
+            .
+
+      - name: Extract Linux amd64 artifacts
+        run: |
+          mkdir -p artifacts
+          id="$(docker create ghcr.io/minekube/vialite:native-craftless-amd64)"
+          docker cp "$id:/out/." artifacts/
+          docker rm "$id"
+          ls -la artifacts
+          test -f artifacts/vialite-linux-amd64
+          chmod +x artifacts/vialite-linux-amd64
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vialite-pr-native-linux-amd64
+          path: artifacts/
+          if-no-files-found: error
+
+  real-client-smoke:
+    name: ${{ matrix.mode }} client ${{ matrix.client-version }} -> server ${{ matrix.server-version }}
+    needs: [validate-matrix, build-subprocess-linux-amd64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.validate-matrix.outputs.matrix) }}
+    steps:
+      - name: Check out vialite
+        uses: actions/checkout@v7
+        with:
+          path: vialite
+
+      - name: Check out Craftless
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.CRAFTLESS_REPOSITORY }}
+          ref: ${{ env.CRAFTLESS_REF }}
+          path: craftless
+
+      - name: Download PR native artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: vialite-pr-native-linux-amd64
+          path: vialite-native
+
+      - name: Verify PR native artifacts
+        run: |
+          test -f vialite-native/vialite-linux-amd64
+          chmod +x vialite-native/vialite-linux-amd64
+
+      - name: Install Linux client runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb \
+            libgl1 \
+            libopenal1 \
+            libxi6 \
+            libxrender1 \
+            libxrandr2 \
+            libxtst6 \
+            libxxf86vm1
+
+      - name: Install mise
+        uses: jdx/mise-action@v4
+        with:
+          install: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: vialite/go/go.mod
+          cache-dependency-path: vialite/go/go.sum
+
+      - name: Build smoke command JSON
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          import os
+
+          root = os.environ["GITHUB_WORKSPACE"]
+          action_command = [
+              "go",
+              "-C",
+              f"{root}/vialite/go",
+              "run",
+              "./cmd/craftless-vialite-smoke-proxy",
+          ]
+          client_command = [
+              "xvfb-run",
+              "-a",
+              "mise",
+              "exec",
+              "--",
+              "gradle",
+              "-p",
+              f"{root}/craftless",
+              ":driver-fabric:runClient",
+          ]
+          print("CRAFTLESS_SMOKE_ACTION_COMMAND_JSON=" + json.dumps(action_command))
+          print("VIALITE_SMOKE_CLIENT_COMMAND_JSON=" + json.dumps(client_command))
+          PY
+
+      - name: Run Craftless real-client smoke through Vialite
+        working-directory: craftless
+        env:
+          CRAFTLESS_FABRIC_CLIENT_SMOKE: "1"
+          CRAFTLESS_LOCAL_SERVER_SMOKE_ROOT: ${{ github.workspace }}/craftless-smoke/${{ matrix.mode }}-${{ matrix.case }}
+          CRAFTLESS_SMOKE_MINECRAFT_VERSION: ${{ matrix.server-version }}
+          CRAFTLESS_SMOKE_ACTION_TIMEOUT_MS: "1200000"
+          CRAFTLESS_FABRIC_SMOKE_CHAT_MESSAGE: vialite ${{ matrix.mode }} ${{ matrix.case }}
+          CRAFTLESS_SMOKE_EXPECT_DISCONNECT: "1"
+          VIALITE_SMOKE_MODE: ${{ matrix.mode }}
+          VIALITE_SMOKE_BINARY_PATH: ${{ github.workspace }}/vialite-native/vialite-linux-amd64
+          VIALITE_SMOKE_BACKEND_VERSION: auto
+          VIALITE_SMOKE_GATE_PROTOCOL: auto
+          VIALITE_SMOKE_READY_TIMEOUT: 2m
+          VIALITE_SMOKE_STOP_TIMEOUT: 30s
+        run: |
+          mise install
+          mise exec -- gradle :driver-fabric:fabricClientSmoke --no-daemon
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: craftless-vialite-${{ matrix.mode }}-${{ matrix.case }}
+          path: craftless-smoke/${{ matrix.mode }}-${{ matrix.case }}/artifacts/
+          if-no-files-found: ignore
