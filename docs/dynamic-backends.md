@@ -38,3 +38,8 @@ For Connect-like dynamic backends:
 Craftwright is the intended CI runner for this matrix once its real client
 backend is available. The scenarios should publish client logs, disconnect
 reasons, screenshots, and Gate/vialite logs as CI artifacts.
+
+The tracked target matrix lives in
+[`test/craftwright/matrix.json`](../test/craftwright/matrix.json). Until
+Craftwright exposes a real client runner, Vialite CI only validates the current
+Craftwright API/SDK contract and keeps those join rows disabled.

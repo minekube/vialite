@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "status": "blocked_until_craftwright_real_client_runner",
+  "craftwright": {
+    "repository": "minekube/craftwright",
+    "ref": "715263ecb4d8ab2c7c40f425f32a401e420158f5",
+    "currentCapability": "fake-session-api",
+    "requiredCapability": "real-client-launch-connect-chat-wait"
+  },
+  "defaults": {
+    "gateProtocol": "auto",
+    "backendVersion": "auto",
+    "forwarding": "velocity",
+    "serverDistribution": "paper"
+  },
+  "rows": [
+    {
+      "id": "embedded-latest-client-latest-backend",
+      "enabled": false,
+      "mode": "embedded",
+      "case": "latest-client-latest-backend",
+      "clientVersion": "26.1.2",
+      "serverVersion": "26.1.2",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "embedded-latest-client-older-backend",
+      "enabled": false,
+      "mode": "embedded",
+      "case": "latest-client-older-backend",
+      "clientVersion": "26.1.2",
+      "serverVersion": "1.21.11",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "embedded-older-client-latest-backend",
+      "enabled": false,
+      "mode": "embedded",
+      "case": "older-client-latest-backend",
+      "clientVersion": "1.21.10",
+      "serverVersion": "26.1.2",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "subprocess-latest-client-latest-backend",
+      "enabled": false,
+      "mode": "subprocess",
+      "case": "latest-client-latest-backend",
+      "clientVersion": "26.1.2",
+      "serverVersion": "26.1.2",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "subprocess-latest-client-older-backend",
+      "enabled": false,
+      "mode": "subprocess",
+      "case": "latest-client-older-backend",
+      "clientVersion": "26.1.2",
+      "serverVersion": "1.21.11",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "subprocess-older-client-latest-backend",
+      "enabled": false,
+      "mode": "subprocess",
+      "case": "older-client-latest-backend",
+      "clientVersion": "1.21.10",
+      "serverVersion": "26.1.2",
+      "expected": ["join", "chat"]
+    }
+  ]
+}

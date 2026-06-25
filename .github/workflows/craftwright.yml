@@ -1,0 +1,55 @@
+name: Craftwright compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/craftwright.yml'
+      - 'test/craftwright/**'
+      - 'docs/dynamic-backends.md'
+  pull_request:
+    paths:
+      - '.github/workflows/craftwright.yml'
+      - 'test/craftwright/**'
+      - 'docs/dynamic-backends.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CRAFTWRIGHT_REPOSITORY: minekube/craftwright
+  CRAFTWRIGHT_REF: 715263ecb4d8ab2c7c40f425f32a401e420158f5
+
+jobs:
+  current-contract:
+    name: current Craftwright contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out vialite
+        uses: actions/checkout@v7
+        with:
+          path: vialite
+
+      - name: Check out Craftwright
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.CRAFTWRIGHT_REPOSITORY }}
+          ref: ${{ env.CRAFTWRIGHT_REF }}
+          path: craftwright
+
+      - name: Install mise
+        uses: jdx/mise-action@v4
+        with:
+          install: false
+
+      - name: Verify current Craftwright API and SDK contract
+        working-directory: craftwright
+        run: |
+          mise install
+          mise run ci
+
+      - name: Validate vialite target matrix
+        working-directory: vialite
+        run: python3 test/craftwright/validate-matrix.py test/craftwright/matrix.json
