@@ -43,3 +43,30 @@ func TestNativeConfigJSON(t *testing.T) {
 		t.Fatalf("unexpected legacy backend: %#v", cfg.Backends[1])
 	}
 }
+
+func TestNativeBackendConfigJSON(t *testing.T) {
+	backend, err := normalizeBackend(Backend{
+		Name:       "session-1",
+		Address:    "127.0.0.1:25566",
+		Forwarding: ForwardingLegacy,
+	})
+	if err != nil {
+		t.Fatalf("normalizeBackend: %v", err)
+	}
+
+	data, err := nativeBackendConfigJSON(backend, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("nativeBackendConfigJSON: %v", err)
+	}
+
+	var cfg nativeBackendConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal backend config: %v", err)
+	}
+	if cfg.Name != "session-1" || cfg.Address != "127.0.0.1:25566" || cfg.Bind != "127.0.0.1:0" {
+		t.Fatalf("unexpected backend config: %#v", cfg)
+	}
+	if !cfg.Detect || cfg.Version != "auto" || cfg.Forwarding != "legacy" {
+		t.Fatalf("unexpected backend protocol fields: %#v", cfg)
+	}
+}

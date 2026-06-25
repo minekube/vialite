@@ -43,3 +43,14 @@ func (o Options) nativeConfigJSONWithBackendBinds(backendBinds map[string]string
 	}
 	return json.Marshal(cfg)
 }
+
+func nativeBackendConfigJSON(backend Backend, bind string) ([]byte, error) {
+	return json.Marshal(nativeBackendConfig{
+		Name:       backend.Name,
+		Address:    backend.Address,
+		Bind:       bind,
+		Version:    backend.Version,
+		Detect:     backend.Detect,
+		Forwarding: string(backend.Forwarding),
+	})
+}

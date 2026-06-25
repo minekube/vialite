@@ -45,8 +45,8 @@ type Options struct {
 	RestartPolicy   *RestartPolicy
 	ShutdownTimeout time.Duration
 
-	// AllowDynamicBackends permits subprocess mode to start without static
-	// backends so callers can register translated backends at runtime.
+	// AllowDynamicBackends permits startup without static backends so callers can
+	// register translated backends at runtime.
 	AllowDynamicBackends bool
 	Backends             []Backend
 }
