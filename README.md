@@ -14,18 +14,24 @@
 
 `vialite` packages Via-powered Minecraft protocol translation behind
 GraalVM native artifacts and a small Go API. Gate can start the native
-runtime as a managed subprocess, or load the shared library in-process where
-embedded mode is viable, while keeping ownership of frontend auth, events,
-routing, Connect, and backend login.
+runtime as a managed subprocess, or load the shared library in-process.
+Gate keeps ownership of frontend auth, events, routing, Connect, and backend
+login.
 
 Target topology:
 
-```text
-player / Bedrock
-  -> optional geyserlite
-  -> Gate classic
-  -> managed vialite native runtime
-  -> backend server
+```mermaid
+flowchart LR
+    java["Java player"]
+    bedrock["Bedrock player"]
+    geyser["optional geyserlite"]
+    gate["Gate classic"]
+    vialite["vialite native runtime"]
+    backend["backend server"]
+
+    java --> gate
+    bedrock --> geyser --> gate
+    gate --> vialite --> backend
 ```
 
 The first supported use case is backend version compatibility. If Gate
@@ -33,25 +39,34 @@ accepts the player, `vialite` helps Gate speak to backend servers running
 different Java protocol versions. It is not a Gate Lite feature and it is
 not the first frontend compatibility layer for clients Gate cannot parse.
 
+## Runtime Modes
+
+- **Embedded:** loads `libvialite` in-process. This is the preferred shape for
+  dynamic backend registrations because one warmed Via runtime can add and
+  remove translated backend listeners.
+- **Subprocess:** starts the native `vialite` binary as a child process. This is
+  a portable fallback and remains useful for static backend configs.
+
 ## What This Repo Provides
 
 | Component | Status |
 | --- | --- |
-| Go module `go.minekube.com/vialite` | Lifecycle, readiness, artifact lookup, embedded/subprocess runners, backend dial address API |
+| Go module `go.minekube.com/vialite` | Lifecycle, readiness, artifact lookup, embedded/subprocess runners, dynamic backend registration, backend dial address API |
 | Gate adapter `go.minekube.com/vialite/integration/gate` | Gate-shaped config and fakeable lifecycle wrapper |
 | Native build scaffold | ViaProxy soft-fork overlay and isolate-thread-aware C ABI contract |
 | Release/update loop | CI, release-please, Renovate, checksummed Linux amd64/arm64 libraries and subprocess binaries, plus Windows amd64 subprocess binary |
 
 When `Options.Version` is empty, `auto`, or `latest`, the Go module checks the
 latest stable GitHub release, downloads the matching checksummed artifact into
-the local cache, and starts that artifact. Set `Version` to a tag such as
-`v0.2.6` to pin an exact release, set `Offline` to disable network access, or
+the local cache, and starts that artifact. Set `Version` to a release tag to
+pin an exact version, set `Offline` to disable network access, or
 set `BinaryPath`/`LibraryPath` to use a local artifact directly.
 
 ## Go Quick Start
 
 ```go
 srv, err := vialite.New(vialite.Options{
+    Mode:         vialite.ModeEmbedded,
     GateProtocol: "auto",
     Backends: []vialite.Backend{
         {
