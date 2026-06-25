@@ -23,6 +23,12 @@ registrations.
 Use `scripts/prism-smoke.sh` to launch a real Prism Launcher instance, join a
 server, and fail/pass from the Minecraft client log.
 
+This is an interim local harness. It is useful on a developer machine that
+already has Prism instances installed, but it should not become the long-term
+CI contract. The CI target is Craftwright once its real client backend is
+available: scenario-driven real Minecraft client automation with stable CLI
+output, artifacts, and cleanup.
+
 ```bash
 scripts/prism-smoke.sh 1.21.11 127.0.0.1:25665
 scripts/prism-smoke.sh 1.21.10 old.localhost:25669
@@ -69,3 +75,7 @@ For Connect-like dynamic backends:
 - register one temporary backend per join;
 - assert only one `vialite` runtime exists while multiple sessions are created;
 - run Prism smoke joins for at least `1.21.10`, `1.21.11`, and `26.1.2`.
+
+When Craftwright can launch real clients, replace the Prism commands with
+Craftwright scenarios that cover the same matrix and publish client logs,
+disconnect reasons, screenshots, and Gate/vialite logs as CI artifacts.
