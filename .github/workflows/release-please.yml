@@ -25,13 +25,32 @@ jobs:
           manifest-file: .release-please-manifest.json
 
       - name: Auto-merge release PR
-        if: ${{ steps.rp.outputs.pr }}
+        if: ${{ steps.rp.outputs.release_created != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          PR_NUMBER=$(echo '${{ steps.rp.outputs.pr }}' | jq -r '.number')
+          PR_JSON='${{ steps.rp.outputs.pr }}'
+          PR_NUMBER=""
+          if [ -n "$PR_JSON" ]; then
+            PR_NUMBER=$(jq -r '.number // empty' <<<"$PR_JSON")
+          fi
+          if [ -z "$PR_NUMBER" ]; then
+            RELEASE_BRANCH="release-please--branches--${{ github.ref_name }}--components--vialite"
+            PR_NUMBER=$(gh pr list \
+              --repo "${{ github.repository }}" \
+              --head "$RELEASE_BRANCH" \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty')
+          fi
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No release PR to merge."
+            exit 0
+          fi
+
           gh pr merge "$PR_NUMBER" \
             --repo "${{ github.repository }}" \
             --merge
