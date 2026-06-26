@@ -35,6 +35,17 @@ For Connect-like dynamic backends:
 - assert only one `vialite` runtime exists while multiple sessions are created;
 - run real-client joins for at least `1.21.10`, `1.21.11`, and `26.1.2`.
 
-Craftwright is the intended CI runner for this matrix once its real client
-backend is available. The scenarios should publish client logs, disconnect
-reasons, screenshots, and Gate/vialite logs as CI artifacts.
+Craftless is the CI runner for the currently supported real-client subset of
+this matrix. The Vialite workflow builds PR-native Linux artifacts, starts a
+real Minecraft client, joins through Vialite, sends chat, and verifies
+server-side join/chat/disconnect evidence.
+
+The tracked target matrix lives in
+[`test/craftless/matrix.json`](../test/craftless/matrix.json). Enabled rows
+currently cover the Craftless `1.21.6` Fabric client against an older backend
+server in subprocess mode. Same-version subprocess coverage remains tracked for
+manual or nightly expansion, but required PR CI focuses on the cross-version Via
+path. Embedded rows remain tracked but disabled until the native isolate
+shutdown crash observed after successful join evidence is fixed. Older client
+rows remain disabled until Craftless ships real client drivers for those
+versions.

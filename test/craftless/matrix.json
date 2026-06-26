@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "status": "real_client_rows_enabled",
+  "craftless": {
+    "repository": "minekube/craftless",
+    "ref": "df55f652ce16052604c6776e0c50e9a29eb6ac66",
+    "currentCapability": "fabric-client-smoke",
+    "clientVersions": ["1.21.6"]
+  },
+  "defaults": {
+    "gateProtocol": "auto",
+    "backendVersion": "auto",
+    "forwarding": "none",
+    "serverDistribution": "paper"
+  },
+  "rows": [
+    {
+      "id": "embedded-same-version",
+      "enabled": false,
+      "mode": "embedded",
+      "case": "same-version",
+      "clientVersion": "1.21.6",
+      "serverVersion": "1.21.6",
+      "blockedReason": "Embedded mode currently crashes during native isolate shutdown after successful Craftless join evidence in CI",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "embedded-newer-client-older-backend",
+      "enabled": false,
+      "mode": "embedded",
+      "case": "newer-client-older-backend",
+      "clientVersion": "1.21.6",
+      "serverVersion": "1.21.4",
+      "blockedReason": "Embedded mode currently crashes during native isolate shutdown after successful Craftless join evidence in CI",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "embedded-older-client-latest-backend",
+      "enabled": false,
+      "mode": "embedded",
+      "case": "older-client-latest-backend",
+      "clientVersion": "blocked",
+      "serverVersion": "1.21.6",
+      "blockedReason": "Craftless only exposes a real Fabric client driver for 1.21.6",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "subprocess-same-version",
+      "enabled": false,
+      "mode": "subprocess",
+      "case": "same-version",
+      "clientVersion": "1.21.6",
+      "serverVersion": "1.21.6",
+      "blockedReason": "Required real-client CI focuses on the cross-version Via path; same-version remains available for manual or nightly expansion",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "subprocess-newer-client-older-backend",
+      "enabled": true,
+      "mode": "subprocess",
+      "case": "newer-client-older-backend",
+      "clientVersion": "1.21.6",
+      "serverVersion": "1.21.4",
+      "expected": ["join", "chat"]
+    },
+    {
+      "id": "subprocess-older-client-latest-backend",
+      "enabled": false,
+      "mode": "subprocess",
+      "case": "older-client-latest-backend",
+      "clientVersion": "blocked",
+      "serverVersion": "1.21.6",
+      "blockedReason": "Craftless only exposes a real Fabric client driver for 1.21.6",
+      "expected": ["join", "chat"]
+    }
+  ]
+}
