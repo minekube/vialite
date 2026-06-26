@@ -14,14 +14,34 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+      pr_number: ${{ steps.rp.outputs.pr }}
     steps:
-      - id: release
-        uses: googleapis/release-please-action@v4
+      - id: rp
+        uses: googleapis/release-please-action@v5
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Auto-merge release PR
+        if: ${{ steps.rp.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER=$(echo '${{ steps.rp.outputs.pr }}' | jq -r '.number')
+          gh pr merge "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --merge
+
+          # Merges done with GITHUB_TOKEN do not trigger a new push workflow.
+          # Run this workflow again on main so release-please observes the
+          # merged release PR and creates the tag/GitHub release.
+          gh workflow run release-please.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.ref_name }}"
 
   trigger-release:
     needs: release-please
