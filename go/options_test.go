@@ -38,6 +38,9 @@ func TestOptionsValidateDefaults(t *testing.T) {
 	if opts.ShutdownTimeout != 30*time.Second {
 		t.Fatalf("ShutdownTimeout = %s, want 30s", opts.ShutdownTimeout)
 	}
+	if opts.BackendStartupTimeout != 25*time.Second {
+		t.Fatalf("BackendStartupTimeout = %s, want 25s", opts.BackendStartupTimeout)
+	}
 	if !opts.Backends[0].Detect {
 		t.Fatal("backend Detect = false, want true for empty version")
 	}
@@ -53,12 +56,13 @@ func TestOptionsValidateKeepsExplicitValues(t *testing.T) {
 	logger := slog.Default()
 	policy := &RestartPolicy{MinBackoff: 2 * time.Second, MaxBackoff: 10 * time.Second, MaxRetries: 3}
 	opts, err := Options{
-		Mode:            ModeSubprocess,
-		GateProtocol:    "1.26",
-		Bind:            "127.0.0.1:25590",
-		Logger:          logger,
-		RestartPolicy:   policy,
-		ShutdownTimeout: 5 * time.Second,
+		Mode:                  ModeSubprocess,
+		GateProtocol:          "1.26",
+		Bind:                  "127.0.0.1:25590",
+		Logger:                logger,
+		RestartPolicy:         policy,
+		ShutdownTimeout:       5 * time.Second,
+		BackendStartupTimeout: 7 * time.Second,
 		Backends: []Backend{{
 			Name:       "lobby",
 			Address:    "127.0.0.1:25566",
@@ -77,6 +81,9 @@ func TestOptionsValidateKeepsExplicitValues(t *testing.T) {
 	}
 	if opts.RestartPolicy != policy {
 		t.Fatal("restart policy pointer was not preserved")
+	}
+	if opts.BackendStartupTimeout != 7*time.Second {
+		t.Fatalf("BackendStartupTimeout = %s, want 7s", opts.BackendStartupTimeout)
 	}
 	if opts.Backends[0].Detect {
 		t.Fatal("Detect = true, want false for explicit version")
