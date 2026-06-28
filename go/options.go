@@ -33,6 +33,9 @@ func (o Options) validate() (Options, error) {
 	if o.ShutdownTimeout == 0 {
 		o.ShutdownTimeout = 30 * time.Second
 	}
+	if o.BackendStartupTimeout == 0 {
+		o.BackendStartupTimeout = 25 * time.Second
+	}
 	if len(o.Backends) == 0 {
 		if o.AllowDynamicBackends {
 			return o, nil

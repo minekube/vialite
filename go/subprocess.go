@@ -113,7 +113,7 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 
-		processDone, err := waitBackendListeners(ctx, done, staticBackends)
+		processDone, err := waitBackendListeners(ctx, done, staticBackends, s.opts.BackendStartupTimeout)
 		if err != nil {
 			r.healthy.Store(false)
 			if ctx.Err() != nil {
@@ -176,8 +176,8 @@ func (r *subprocessRunner) waitProcess(ctx context.Context, cmd *exec.Cmd, done 
 	}
 }
 
-func waitBackendListeners(ctx context.Context, done <-chan error, backends map[string]string) (bool, error) {
-	deadline := time.After(10 * time.Second)
+func waitBackendListeners(ctx context.Context, done <-chan error, backends map[string]string, timeout time.Duration) (bool, error) {
+	deadline := time.After(timeout)
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -199,8 +199,8 @@ func waitBackendListeners(ctx context.Context, done <-chan error, backends map[s
 	}
 }
 
-func waitBackendListenersProcess(ctx context.Context, proc *subprocessBackendProcess, backends map[string]string) (bool, error) {
-	deadline := time.After(10 * time.Second)
+func waitBackendListenersProcess(ctx context.Context, proc *subprocessBackendProcess, backends map[string]string, timeout time.Duration) (bool, error) {
+	deadline := time.After(timeout)
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -337,7 +337,7 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 	r.pending[key] = proc
 	r.mu.Unlock()
 
-	if _, err := waitBackendListenersProcess(ctx, proc, map[string]string{key: addr}); err != nil {
+	if _, err := waitBackendListenersProcess(ctx, proc, map[string]string{key: addr}, opts.BackendStartupTimeout); err != nil {
 		_ = stopSubprocessBackend(context.Background(), proc, opts.ShutdownTimeout)
 		r.mu.Lock()
 		if r.pending[key] == proc {

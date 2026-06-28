@@ -44,6 +44,9 @@ type Options struct {
 	Logger          *slog.Logger
 	RestartPolicy   *RestartPolicy
 	ShutdownTimeout time.Duration
+	// BackendStartupTimeout bounds how long subprocess mode waits for a
+	// translated backend's loopback listener to become dialable.
+	BackendStartupTimeout time.Duration
 
 	// AllowDynamicBackends permits startup without static backends so callers can
 	// register translated backends at runtime.
