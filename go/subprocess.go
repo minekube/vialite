@@ -177,7 +177,8 @@ func (r *subprocessRunner) waitProcess(ctx context.Context, cmd *exec.Cmd, done 
 }
 
 func waitBackendListeners(ctx context.Context, done <-chan error, backends map[string]string) (bool, error) {
-	deadline := time.After(10 * time.Second)
+	waitCtx, cancel := backendListenerReadyContext(ctx)
+	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -190,9 +191,10 @@ func waitBackendListeners(ctx context.Context, done <-chan error, backends map[s
 				err = errors.New("vialite: subprocess exited before backend listener became ready")
 			}
 			return true, err
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-deadline:
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
 			return false, errors.New("vialite: subprocess backend listener did not become ready")
 		case <-ticker.C:
 		}
@@ -200,7 +202,8 @@ func waitBackendListeners(ctx context.Context, done <-chan error, backends map[s
 }
 
 func waitBackendListenersProcess(ctx context.Context, proc *subprocessBackendProcess, backends map[string]string) (bool, error) {
-	deadline := time.After(10 * time.Second)
+	waitCtx, cancel := backendListenerReadyContext(ctx)
+	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -214,13 +217,25 @@ func waitBackendListenersProcess(ctx context.Context, proc *subprocessBackendPro
 				err = errors.New("vialite: subprocess exited before backend listener became ready")
 			}
 			return true, err
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-deadline:
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
 			return false, errors.New("vialite: subprocess backend listener did not become ready")
 		case <-ticker.C:
 		}
 	}
+}
+
+func backendListenerReadyContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	const fallbackTimeout = 10 * time.Second
+	if ctx == nil {
+		return context.WithTimeout(context.Background(), fallbackTimeout)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, fallbackTimeout)
 }
 
 func allBackendsDialable(backends map[string]string) bool {

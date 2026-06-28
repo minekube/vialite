@@ -465,6 +465,50 @@ func TestSubprocessRunnerStopDuringDynamicAddDoesNotPanic(t *testing.T) {
 	cancel()
 }
 
+func TestSubprocessRunnerDynamicAddHonorsCallerDeadline(t *testing.T) {
+	bin := buildSubprocessHelper(t)
+	t.Setenv("VIALITE_HELPER_READY_DELAY_MS", "11000")
+
+	opts, err := Options{
+		Mode:                 ModeSubprocess,
+		BinaryPath:           bin,
+		AllowDynamicBackends: true,
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	if err := srv.WaitReady(context.Background()); err != nil {
+		cancel()
+		t.Fatalf("WaitReady: %v", err)
+	}
+	addCtx, cancelAdd := context.WithTimeout(context.Background(), 15*time.Second)
+	addr, err := srv.AddBackend(addCtx, Backend{Name: "session-1", Address: "127.0.0.1:25566"})
+	cancelAdd()
+	if err != nil {
+		cancel()
+		t.Fatalf("AddBackend: %v", err)
+	}
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		cancel()
+		t.Fatalf("dynamic backend not dialable: %v", err)
+	}
+	_ = conn.Close()
+	if err := srv.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Start returned %v, want nil", err)
+	}
+	cancel()
+}
+
 func TestSubprocessRunnerStaticRestartKeepsDynamicBackend(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "static-exited")
