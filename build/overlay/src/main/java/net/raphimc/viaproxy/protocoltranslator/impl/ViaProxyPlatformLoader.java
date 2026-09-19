@@ -23,7 +23,7 @@ import com.viaversion.viaversion.api.platform.ViaPlatformLoader;
 import com.viaversion.viaversion.api.protocol.version.VersionProvider;
 import com.viaversion.viaversion.protocols.v1_8to1_9.provider.CompressionProvider;
 import net.raphimc.vialegacy.protocol.classic.c0_28_30toa1_0_15.provider.ClassicCustomCommandProvider;
-import net.raphimc.vialegacy.protocol.classic.c0_28_30toa1_0_15.provider.ClassicMPPassProvider;
+import net.raphimc.vialegacy.protocol.classic.c0_28_30toa1_0_15.provider.ClassicMpPassProvider;
 import net.raphimc.vialegacy.protocol.classic.c0_28_30toa1_0_15.provider.ClassicWorldHeightProvider;
 import net.raphimc.vialegacy.protocol.release.r1_2_4_5tor1_3_1_2.provider.OldAuthProvider;
 import net.raphimc.vialegacy.protocol.release.r1_6_4tor1_7_2_5.provider.EncryptionProvider;
@@ -49,7 +49,9 @@ public class ViaProxyPlatformLoader implements ViaPlatformLoader {
         Via.getManager().getProviders().use(OldAuthProvider.class, new ViaProxyOldAuthProvider());
         Via.getManager().getProviders().use(ClassicWorldHeightProvider.class, new ViaProxyClassicWorldHeightProvider());
         Via.getManager().getProviders().use(ClassicCustomCommandProvider.class, new ViaProxyClassicCustomCommandProvider());
-        Via.getManager().getProviders().use(ClassicMPPassProvider.class, new ViaProxyClassicMPPassProvider());
+        Via.getManager().getProviders().use(ClassicMpPassProvider.class, new ViaProxyClassicMPPassProvider());
+
+        // ViaBedrock is intentionally not loaded in vialite (see ProtocolTranslator).
 
         // ViaProxy plugins
         ViaProxy.EVENT_MANAGER.call(new ViaLoadingEvent());
