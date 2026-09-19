@@ -160,7 +160,7 @@ public class LoginPacketHandler extends PacketHandler {
 
             boolean auth = this.proxyConnection.getClientVersion().olderThan(ProtocolVersion.v1_20_5) || loginHelloPacket.authenticate;
             if (auth && this.proxyConnection.getServerVersion().olderThanOrEqualTo(LegacyProtocolVersion.r1_6_4)) {
-                auth = this.proxyConnection.getUserConnection().get(ProtocolMetadataStorage.class).authenticate;
+                auth = this.proxyConnection.getUserConnection().get(ProtocolMetadataStorage.class).isAuthenticate();
             }
             if (auth) {
                 ExternalInterface.joinServer(serverHash, this.proxyConnection);
@@ -200,6 +200,7 @@ public class LoginPacketHandler extends PacketHandler {
 
         return true;
     }
+
 
     private static KeyPair keyPair() {
         KeyPair current = keyPair;

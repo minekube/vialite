@@ -18,6 +18,7 @@
 package net.raphimc.viaproxy.protocoltranslator;
 
 import com.viaversion.viaaprilfools.ViaAprilFoolsPlatformImpl;
+import com.viaversion.viaaprilfools.api.AprilFoolsProtocolVersion;
 import com.viaversion.viabackwards.ViaBackwardsPlatformImpl;
 import com.viaversion.viarewind.ViaRewindPlatformImpl;
 import com.viaversion.viaversion.ViaManagerImpl;
@@ -26,6 +27,8 @@ import com.viaversion.viaversion.api.protocol.version.VersionType;
 import com.viaversion.viaversion.commands.ViaCommandHandler;
 import com.viaversion.viaversion.protocols.v1_20_3to1_20_5.Protocol1_20_3To1_20_5;
 import net.lenni0451.classtransform.utils.log.Logger;
+import net.lenni0451.reflect.Classes;
+import net.raphimc.vialegacy.api.LegacyProtocolVersion;
 import net.raphimc.viaproxy.ViaProxy;
 import net.raphimc.viaproxy.plugins.events.ProtocolTranslatorInitEvent;
 import net.raphimc.viaproxy.protocoltranslator.impl.ViaProxyInjector;
@@ -66,9 +69,30 @@ public class ProtocolTranslator {
     public static void init() {
         moveConfigs();
         patchConfigs();
-        final Supplier<?>[] platformSuppliers = ViaProxy.EVENT_MANAGER.call(new ProtocolTranslatorInitEvent(ViaBackwardsPlatformImpl::new, ViaRewindPlatformImpl::new, ViaProxyViaLegacyPlatform::new, ViaAprilFoolsPlatformImpl::new)).getPlatformSuppliers().toArray(new Supplier[0]);
+        final Supplier<?>[] additionalPlatformSuppliers = ViaProxy.EVENT_MANAGER.call(new ProtocolTranslatorInitEvent()).getPlatformSuppliers().toArray(new Supplier[0]);
         ViaManagerImpl.initAndLoad(new ViaProxyViaVersionPlatform(), new ViaProxyInjector(), new ViaCommandHandler(false), new ViaProxyPlatformLoader(), () -> {
-            for (Supplier<?> platformSupplier : platformSuppliers) {
+            if (Boolean.parseBoolean(System.getProperty("viaproxy.enableViaBackwards", "true"))) {
+                new ViaBackwardsPlatformImpl();
+            }
+            if (Boolean.parseBoolean(System.getProperty("viaproxy.enableViaRewind", "true"))) {
+                new ViaRewindPlatformImpl();
+            }
+            if (Boolean.parseBoolean(System.getProperty("viaproxy.enableViaLegacy", "true"))) {
+                new ViaProxyViaLegacyPlatform();
+            } else {
+                Classes.ensureInitialized(LegacyProtocolVersion.class); // Register the versions to avoid crashes when using the API
+            }
+            if (Boolean.parseBoolean(System.getProperty("viaproxy.enableViaAprilFools", "true"))) {
+                new ViaAprilFoolsPlatformImpl();
+            } else {
+                Classes.ensureInitialized(AprilFoolsProtocolVersion.class); // Register the versions to avoid crashes when using the API
+            }
+            // ViaBedrock is intentionally not initialized in vialite: this runtime is the
+            // backend-side Java translator for Gate classic, and Bedrock clients reach Gate
+            // through geyserlite. Keeping the platform unloaded also keeps the native image
+            // free of ViaBedrock's runtime-only initialization. The Bedrock protocol versions
+            // are therefore not registered here (same as before this overlay was rebased).
+            for (Supplier<?> platformSupplier : additionalPlatformSuppliers) {
                 platformSupplier.get();
             }
         });
