@@ -24,7 +24,7 @@
       "depNameTemplate": "ViaVersion/ViaProxy",
       "packageNameTemplate": "https://github.com/ViaVersion/ViaProxy",
       "datasourceTemplate": "git-refs",
-      "currentValueTemplate": "master"
+      "currentValueTemplate": "main"
     },
     {
       "customType": "regex",
