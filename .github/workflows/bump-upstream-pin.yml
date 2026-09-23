@@ -1,0 +1,398 @@
+name: Bump upstream pin
+
+# Keeps build/via.version on the latest upstream ViaProxy release so a new
+# Minecraft client version reaches customers without a hand-written pin bump.
+#
+# Why a workflow instead of Renovate: geyserlite gets its upstream Geyser bumps
+# from Renovate, but Renovate is not installed for this repository, and the
+# custom manager in renovate.json points at ViaVersion/ViaProxy's "master"
+# branch, which no longer exists (upstream's default branch is "main"). This
+# workflow is self-contained on purpose: it needs no third-party app
+# installation and no cross-repository credentials.
+#
+# It never merges. A pin bump is a code change: build/overlay ships adapted
+# copies of upstream files that must be re-derived at the new ref
+# (build/overlay/README.md). Review the linked validation runs before merging.
+#
+# Why "release" is the default candidate: upstream's default branch bundles
+# ViaVersion snapshots (currently 5.12.1-SNAPSHOT), releases bundle the
+# released ViaVersion. Dispatch with source=branch or an explicit ref when an
+# unreleased upstream commit is needed for a brand-new client protocol.
+
+on:
+  schedule:
+    # 05:17 Europe/Berlin (CEST) so a bump is waiting before the working day.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Candidate to pin: release (latest stable ViaProxy release) or branch (default-branch HEAD).'
+        type: choice
+        options: [release, branch]
+        default: release
+      ref:
+        description: 'Explicit upstream ref (tag, branch or commit) to pin. Overrides source.'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Resolve and report only; push no branch and open no pull request.'
+        type: boolean
+        default: false
+      validate:
+        description: 'Dispatch CI and the native image build on the bump branch and wait for them.'
+        type: boolean
+        default: true
+      craftless:
+        description: 'Also dispatch the Craftless real-client smoke (slow; run before merging).'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: bump-upstream-pin
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: ViaVersion/ViaProxy
+  UPSTREAM_BRANCH: main
+  VIAVERSION_REPOSITORY: ViaVersion/ViaVersion
+  PIN_FILE: build/via.version
+  BUMP_BRANCH: automation/bump-viaproxy
+  BASE_REF: main
+  OVERLAY_README: build/overlay/README.md
+  WORKFLOW_PATH: .github/workflows/bump-upstream-pin.yml
+  # Upper bound for a single dispatched validation workflow. native-image.yml
+  # builds linux amd64/arm64 and a windows executable, craftless.yml adds a
+  # real-client smoke; both are slower than CI.
+  CI_TIMEOUT_SECONDS: '1800'
+  NATIVE_TIMEOUT_SECONDS: '5400'
+  CRAFTLESS_TIMEOUT_SECONDS: '7200'
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Check out base branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.BASE_REF }}
+
+      - name: Configure git identity
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Resolve upstream candidate
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_SOURCE: ${{ inputs.source || 'release' }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_REF}" ]; then
+            CANDIDATE_TAG="${INPUT_REF}"
+            CANDIDATE_SHA="$(gh api "repos/${UPSTREAM_REPOSITORY}/commits/${INPUT_REF}" --jq .sha)"
+            SOURCE_DESCRIPTION="explicit ref ${INPUT_REF}"
+          elif [ "${INPUT_SOURCE}" = 'branch' ]; then
+            CANDIDATE_TAG=''
+            CANDIDATE_SHA="$(gh api "repos/${UPSTREAM_REPOSITORY}/commits/${UPSTREAM_BRANCH}" --jq .sha)"
+            SOURCE_DESCRIPTION="branch ${UPSTREAM_BRANCH}"
+          else
+            CANDIDATE_TAG="$(gh api "repos/${UPSTREAM_REPOSITORY}/releases/latest" --jq .tag_name)"
+            CANDIDATE_SHA="$(gh api "repos/${UPSTREAM_REPOSITORY}/commits/${CANDIDATE_TAG}" --jq .sha)"
+            SOURCE_DESCRIPTION="release ${CANDIDATE_TAG}"
+          fi
+
+          if [ "${#CANDIDATE_SHA}" -ne 40 ]; then
+            echo "::error::Could not resolve a commit for ${SOURCE_DESCRIPTION}"
+            exit 1
+          fi
+
+          CURRENT_SHA="$(tr -d '[:space:]' < "${PIN_FILE}")"
+          if [ "${#CURRENT_SHA}" -ne 40 ]; then
+            echo "::error::${PIN_FILE} does not hold a 40 character commit digest"
+            exit 1
+          fi
+
+          {
+            echo "candidate_sha=${CANDIDATE_SHA}"
+            echo "candidate_tag=${CANDIDATE_TAG}"
+            echo "current_sha=${CURRENT_SHA}"
+            echo "candidate_description=${SOURCE_DESCRIPTION}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "resolved from: ${SOURCE_DESCRIPTION}"
+          echo "current pin:   ${CURRENT_SHA}"
+
+          if [ "${CANDIDATE_SHA}" = "${CURRENT_SHA}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "${PIN_FILE} already pins ${SOURCE_DESCRIPTION}; nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "${PIN_FILE} moves ${CURRENT_SHA} -> ${CANDIDATE_SHA} (${SOURCE_DESCRIPTION})."
+          fi
+
+      - name: Inspect bundled ViaVersion
+        id: viaversion
+        if: steps.resolve.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+
+          # The pin matters because ViaProxy's build.gradle bundles ViaVersion;
+          # that bundled version is what decides which client protocols the
+          # released vialite artifact can translate.
+          BUNDLED="$(gh api \
+            "repos/${UPSTREAM_REPOSITORY}/contents/build.gradle?ref=${CANDIDATE_SHA}" \
+            --jq .content | base64 -d |
+            sed -n 's/.*includeInJar "com\.viaversion:viaversion-common:\([^"]*\)".*/\1/p' | head -n 1)"
+          LATEST="$(gh api "repos/${VIAVERSION_REPOSITORY}/releases/latest" --jq .tag_name)"
+
+          {
+            echo "bundled=${BUNDLED}"
+            echo "latest=${LATEST}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "ViaVersion bundled by the candidate: ${BUNDLED}"
+          echo "Latest upstream ViaVersion release:  ${LATEST}"
+
+      - name: Update pin
+        id: update
+        if: steps.resolve.outputs.changed == 'true' && inputs.dry_run != true
+        env:
+          CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' "${CANDIDATE_SHA}" > "${PIN_FILE}"
+          if git diff --quiet -- "${PIN_FILE}"; then
+            echo "::error::${PIN_FILE} already contained ${CANDIDATE_SHA}"
+            exit 1
+          fi
+
+          git diff -- "${PIN_FILE}"
+          git commit -m "fix(deps): bump ViaProxy to ${CANDIDATE_SHA:0:7}" -- "${PIN_FILE}"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push bump branch
+        id: branch
+        if: steps.update.outputs.head_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          REMOTE_SHA="$(git ls-remote --heads origin "${BUMP_BRANCH}" | awk '{print $1}')"
+          if [ -n "${REMOTE_SHA}" ]; then
+            git push --force-with-lease="refs/heads/${BUMP_BRANCH}:${REMOTE_SHA}" origin "HEAD:refs/heads/${BUMP_BRANCH}"
+          else
+            git push origin "HEAD:refs/heads/${BUMP_BRANCH}"
+          fi
+
+      - name: Open or refresh pull request
+        id: pr
+        if: steps.update.outputs.head_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
+          CANDIDATE_TAG: ${{ steps.resolve.outputs.candidate_tag }}
+          CANDIDATE_DESCRIPTION: ${{ steps.resolve.outputs.candidate_description }}
+          CURRENT_SHA: ${{ steps.resolve.outputs.current_sha }}
+          BUNDLED_VIAVERSION: ${{ steps.viaversion.outputs.bundled }}
+          LATEST_VIAVERSION: ${{ steps.viaversion.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          # Labels are cosmetic: never let them break the bump.
+          for LABEL in dependencies via-rebuild; do
+            gh label create "${LABEL}" --repo "${GITHUB_REPOSITORY}" --force \
+              --color 0366d6 --description 'Upstream dependency bump' >/dev/null 2>&1 || true
+          done
+
+          SHORT="${CANDIDATE_SHA:0:7}"
+          if [ -n "${CANDIDATE_TAG}" ]; then
+            TITLE="fix(deps): bump ViaProxy to ${SHORT} (${CANDIDATE_TAG})"
+            CANDIDATE_LABEL="${CANDIDATE_TAG}"
+          else
+            TITLE="fix(deps): bump ViaProxy to ${SHORT}"
+            CANDIDATE_LABEL="${CANDIDATE_DESCRIPTION}"
+          fi
+
+          UPSTREAM_URL="https://github.com/${UPSTREAM_REPOSITORY}"
+          OVERLAY_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${BASE_REF}/${OVERLAY_README}"
+          WORKFLOW_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${BASE_REF}/${WORKFLOW_PATH}"
+          {
+            echo "Automated upstream pin bump: \`${PIN_FILE}\` \`${CURRENT_SHA:0:7}\` -> \`${SHORT}\`."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Candidate | [\`${CANDIDATE_LABEL}\`](${UPSTREAM_URL}/commit/${CANDIDATE_SHA}) (${CANDIDATE_DESCRIPTION}) |"
+            echo "| Pinned before | [\`${CURRENT_SHA:0:7}\`](${UPSTREAM_URL}/commit/${CURRENT_SHA}) |"
+            echo "| Upstream diff | [${CURRENT_SHA:0:7}...${SHORT}](${UPSTREAM_URL}/compare/${CURRENT_SHA}...${CANDIDATE_SHA}) |"
+            echo "| ViaVersion bundled by candidate | \`${BUNDLED_VIAVERSION}\` |"
+            echo "| Latest upstream ViaVersion release | \`${LATEST_VIAVERSION}\` |"
+            echo
+            if [ -n "${BUNDLED_VIAVERSION}" ] && [ -n "${LATEST_VIAVERSION}" ] &&
+              [ "${BUNDLED_VIAVERSION}" != "${LATEST_VIAVERSION}" ]; then
+              echo "> The candidate still bundles ViaVersion \`${BUNDLED_VIAVERSION}\` while upstream has"
+              echo "> released \`${LATEST_VIAVERSION}\`: the newest upstream fix is not in this candidate yet, so"
+              echo "> pinning it will not yet cover clients that need \`${LATEST_VIAVERSION}\`."
+              echo
+            fi
+            echo "### Before merging"
+            echo
+            echo "- [ ] Re-derive \`build/overlay/\` against the new ref. A new pin silently reverts every"
+            echo "      upstream change in the files the overlay ships adapted (see"
+            echo "      [\`${OVERLAY_README}\`](${OVERLAY_URL})) — renamed classes or new accessors break the"
+            echo "      native build, so re-apply only the documented deltas and keep that list in sync."
+            echo "- [ ] Confirm the dispatched validation runs for \`${SHORT}\` are green:"
+            echo "      pending, updated below by this run."
+            echo "- [ ] Merge, then confirm the release chain: release-please cuts the vialite release and"
+            echo "      dispatches gate's \`bump-managed-dependency.yml\`."
+            echo
+            echo "Opened by [\`bump-upstream-pin.yml\`](${WORKFLOW_URL}). Never auto-merged: a"
+            echo "pin bump is a code change, not a lockfile refresh."
+          } > pr-body.md
+
+          PR_NUMBER="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${BUMP_BRANCH}" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -z "${PR_NUMBER}" ]; then
+            gh pr create --repo "${GITHUB_REPOSITORY}" --base "${BASE_REF}" --head "${BUMP_BRANCH}" \
+              --title "${TITLE}" --body-file pr-body.md
+            PR_NUMBER="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${BUMP_BRANCH}" --state open \
+              --json number --jq '.[0].number')"
+          else
+            gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --body-file pr-body.md
+          fi
+
+          gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
+            --add-label dependencies --add-label via-rebuild >/dev/null 2>&1 ||
+            echo "::warning::Could not add labels to #${PR_NUMBER}."
+
+          echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
+          echo "Opened/refreshed pull request #${PR_NUMBER}: ${TITLE}"
+
+      - name: Validate bump branch
+        id: validate
+        if: steps.pr.outputs.number != '' && inputs.validate != false
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.update.outputs.head_sha }}
+          RUN_CRAFTLESS: ${{ inputs.craftless == true }}
+        run: |
+          set -euo pipefail
+
+          : > validation.md
+          FAILED=0
+
+          dispatch_and_wait() {
+            local workflow="$1" timeout_seconds="$2"
+
+            gh workflow run "${workflow}" --repo "${GITHUB_REPOSITORY}" --ref "${BUMP_BRANCH}"
+
+            local run_id=''
+            for _ in $(seq 1 60); do
+              run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow "${workflow}" \
+                --branch "${BUMP_BRANCH}" --event workflow_dispatch --limit 30 \
+                --json databaseId,headSha \
+                --jq "map(select(.headSha == \"${HEAD_SHA}\")) | .[0].databaseId // \"\"")"
+              if [ -n "${run_id}" ]; then
+                break
+              fi
+              sleep 10
+            done
+
+            if [ -z "${run_id}" ]; then
+              echo "::warning::Timed out waiting for dispatched ${workflow} run to appear"
+              echo "- \`${workflow}\`: dispatch not observed for \`${HEAD_SHA:0:7}\`" >> validation.md
+              return 1
+            fi
+
+            local deadline=$((SECONDS + timeout_seconds))
+            local status='' conclusion='' url='' json=''
+            while [ "${SECONDS}" -lt "${deadline}" ]; do
+              json="$(gh run view "${run_id}" --repo "${GITHUB_REPOSITORY}" --json status,conclusion,url)"
+              status="$(echo "${json}" | jq -r '.status')"
+              conclusion="$(echo "${json}" | jq -r '.conclusion // ""')"
+              url="$(echo "${json}" | jq -r '.url')"
+              if [ "${status}" = 'completed' ]; then
+                break
+              fi
+              sleep 20
+            done
+
+            if [ "${status}" != 'completed' ]; then
+              echo "::warning::${workflow} run ${run_id} did not finish within ${timeout_seconds}s"
+              echo "- \`${workflow}\`: [still running after $((timeout_seconds / 60)) min](${url})" >> validation.md
+              return 1
+            fi
+
+            if [ "${conclusion}" = 'success' ]; then
+              echo "- \`${workflow}\`: [success](${url})" >> validation.md
+              return 0
+            fi
+
+            echo "::warning::${workflow} run ${run_id} concluded ${conclusion}: ${url}"
+            echo "- \`${workflow}\`: [${conclusion}](${url})" >> validation.md
+            return 1
+          }
+
+          if ! dispatch_and_wait ci.yml "${CI_TIMEOUT_SECONDS}"; then
+            FAILED=1
+          fi
+          if ! dispatch_and_wait native-image.yml "${NATIVE_TIMEOUT_SECONDS}"; then
+            FAILED=1
+          fi
+          if [ "${RUN_CRAFTLESS}" = 'true' ]; then
+            if ! dispatch_and_wait craftless.yml "${CRAFTLESS_TIMEOUT_SECONDS}"; then
+              FAILED=1
+            fi
+          else
+            echo "- \`craftless.yml\`: not dispatched (re-dispatch this workflow with \`craftless=true\` before merging)" >> validation.md
+          fi
+
+          echo "failed=${FAILED}" >> "$GITHUB_OUTPUT"
+          cat validation.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report validation results on the pull request
+        if: steps.validate.outputs.failed != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          VALIDATION_FAILED: ${{ steps.validate.outputs.failed }}
+        run: |
+          set -euo pipefail
+
+          if [ "${VALIDATION_FAILED}" = '0' ]; then
+            HEADING='### Validation'
+          else
+            HEADING='### Validation (failed — the pin needs work before it can merge)'
+          fi
+
+          {
+            echo "${HEADING}"
+            echo
+            cat validation.md
+            echo
+            echo "Dispatched validations run on \`${BUMP_BRANCH}\` because pulls opened by"
+            echo "\`GITHUB_TOKEN\` do not trigger \`pull_request\` workflows."
+          } > validation-comment.md
+
+          gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body-file validation-comment.md
+
+          if [ "${VALIDATION_FAILED}" != '0' ]; then
+            echo "::error::One or more validation workflows failed for #${PR_NUMBER}; the pin bump needs attention."
+            exit 1
+          fi

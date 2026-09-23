@@ -69,8 +69,18 @@ Relevant workflow skills, when the agent runtime provides them:
 
 - `build/via.version` pins the upstream ViaProxy source ref used by the native
   overlay.
-- Renovate tracks ViaProxy upstream and opens dependency PRs, but agents should
-  still inspect upstream diffs and CI results before assuming a bump is safe.
+- `.github/workflows/bump-upstream-pin.yml` is the periodic upstream update:
+  daily, and on manual dispatch, it resolves the latest upstream ViaProxy
+  release, pushes `automation/bump-viaproxy` and opens a reviewed pull request
+  with CI and the native image build (optionally the Craftless real-client
+  smoke) attached. It never merges, and it dispatches those workflows itself
+  because pulls opened with `GITHUB_TOKEN` do not trigger `pull_request` runs.
+- Renovate (`renovate.json`) is not installed for this repository and opens no
+  pull requests here; geyserlite gets its upstream Geyser bumps from Renovate.
+  If Renovate is enabled later, keep it from racing the workflow above over
+  `build/via.version`.
+- Agents must still inspect the upstream diff and the attached validation runs
+  before assuming a bump is safe.
 - Releases publish checksummed native artifacts. Gate consumes those releases
   through its managed dependency update workflow.
 - Keep release-chain changes explicit: ViaLite release -> Gate managed
