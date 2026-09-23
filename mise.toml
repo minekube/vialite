@@ -40,7 +40,7 @@ run = "golangci-lint run"
 
 [tasks."lint:md"]
 description = "run markdown lint"
-run = "markdownlint-cli2 '**/*.md' '#.cache/**' '#build/.work/**'"
+run = "markdownlint-cli2 '**/*.md' '#.cache/**' '#build/.work/**' '#CHANGELOG.md'"
 
 [tasks."lint:yaml"]
 description = "run YAML lint"
