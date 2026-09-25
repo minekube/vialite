@@ -10,7 +10,7 @@ const (
 	//
 	// Keep it on the current release: .github/workflows/bump-upstream-pin.yml
 	// fails when it trails `releases/latest` by more than one release.
-	DefaultMirrorVersion    = "v0.3.1"
+	DefaultMirrorVersion    = "v0.3.3"
 	DefaultDownloadBase     = "https://github.com/minekube/vialite/releases/download"
 	DefaultLatestReleaseURL = "https://api.github.com/repos/minekube/vialite/releases/latest"
 )
