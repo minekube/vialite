@@ -55,6 +55,12 @@ func downloadAsset(ctx context.Context, opts Options, kind assetKind) (string, e
 		sum, hashErr := streamSha(existing)
 		_ = existing.Close()
 		if hashErr == nil && sum == expectedSha {
+			logRuntimeResolution(opts, runtimeKindName(kind),
+				"source", "cache",
+				"version", version,
+				"path", cachedPath,
+				"sha256", expectedSha,
+			)
 			return cachedPath, nil
 		}
 	}
@@ -88,26 +94,60 @@ func downloadAsset(ctx context.Context, opts Options, kind assetKind) (string, e
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("vialite: rename %s: %w", cachedPath, err)
 	}
+	logRuntimeResolution(opts, runtimeKindName(kind),
+		"source", "download",
+		"version", version,
+		"path", cachedPath,
+		"url", url,
+		"sha256", expectedSha,
+	)
 	return cachedPath, nil
 }
 
+// resolveDownloadVersion decides which release the runtime artifact is taken
+// from.
+//
+// An empty Version means "latest", exactly like "auto"/"latest". Without a
+// mirror the latest stable minekube/vialite release is resolved through the
+// GitHub release API. With a mirror the mirror's own latest-release endpoint is
+// asked first, so a mirror deployment also follows new releases.
+//
+// A mirror that cannot answer (a plain file mirror, no /latest JSON) is the one
+// case where vialite falls back to the compiled-in DefaultMirrorVersion instead
+// of failing to start — but it says so loudly rather than silently running an
+// outdated runtime. An explicit "latest"/"auto" with an unreachable mirror is
+// still a hard error: the operator asked for latest, and guessing is worse.
 func resolveDownloadVersion(ctx context.Context, opts Options) (string, error) {
 	version := strings.TrimSpace(opts.Version)
-	if version == "" && opts.Mirror != "" {
-		return DefaultMirrorVersion, nil
-	}
+	unset := version == ""
 	if !latestVersionRequested(version) {
 		return version, nil
 	}
-	url := DefaultLatestReleaseURL
 	if opts.Mirror != "" {
-		url = strings.TrimSuffix(opts.Mirror, "/") + "/latest"
+		latest, err := fetchLatestReleaseTag(ctx, mirrorLatestReleaseURL(opts.Mirror))
+		if err == nil {
+			return latest, nil
+		}
+		if !unset {
+			return "", err
+		}
+		opts.resolutionLogger().Warn(
+			"vialite: mirror does not report a latest release; using the pinned fallback runtime",
+			"mirror", opts.Mirror,
+			"fallbackVersion", DefaultMirrorVersion,
+			"error", err,
+			"hint", fmt.Sprintf("pin via.version to %s to make this deliberate, or serve %s/latest with {\"tag_name\":\"...\"} to follow your mirror's newest release", DefaultMirrorVersion, strings.TrimSuffix(opts.Mirror, "/")),
+		)
+		return DefaultMirrorVersion, nil
 	}
-	version, err := fetchLatestReleaseTag(ctx, url)
-	if err != nil {
-		return "", err
-	}
-	return version, nil
+	return fetchLatestReleaseTag(ctx, DefaultLatestReleaseURL)
+}
+
+// mirrorLatestReleaseURL is the latest-release endpoint queried on a custom
+// mirror. Mirrors that follow the GitHub release layout expose it; mirrors that
+// only serve files do not and trigger the documented fallback.
+func mirrorLatestReleaseURL(mirror string) string {
+	return strings.TrimSuffix(mirror, "/") + "/latest"
 }
 
 func latestVersionRequested(version string) bool {

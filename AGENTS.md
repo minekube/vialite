@@ -69,12 +69,30 @@ Relevant workflow skills, when the agent runtime provides them:
 
 - `build/via.version` pins the upstream ViaProxy source ref used by the native
   overlay.
+- Runtime artifact resolution (`go/download.go`): an empty/unset `Version`
+  means "latest", exactly like `auto`/`latest`. With a `Mirror` set, the
+  mirror's own `/latest` is asked first; only a mirror that cannot answer falls
+  back to `DefaultMirrorVersion`, and that fallback logs a warning naming the
+  version and the remedy. `DefaultMirrorVersion` must stay on the current
+  release (the daily workflow fails when it trails by more than one release).
+  Never make an explicit `auto`/`latest` silently downgrade.
+- Every start logs one `vialite: resolved runtime` line with the artifact
+  version and provenance (download/cache/binaryPath/env/embedded/path/library
+  source). Keep that line when touching `go/locate.go` or `go/download.go`:
+  support uses it to tell which runtime (and therefore which ViaVersion
+  ceiling) an operator is running.
 - `.github/workflows/bump-upstream-pin.yml` is the periodic upstream update:
   daily, and on manual dispatch, it resolves the latest upstream ViaProxy
-  release, pushes `automation/bump-viaproxy` and opens a reviewed pull request
-  with CI and the native image build (optionally the Craftless real-client
-  smoke) attached. It never merges, and it dispatches those workflows itself
-  because pulls opened with `GITHUB_TOKEN` do not trigger `pull_request` runs.
+  release, reports the bundled ViaVersion against the latest upstream release,
+  pushes `automation/bump-viaproxy` and opens a reviewed pull request with CI
+  and the native image build (optionally the Craftless real-client smoke)
+  attached. It never merges, and it dispatches those workflows itself because
+  pulls opened with `GITHUB_TOKEN` do not trigger `pull_request` runs.
+- The merge -> release -> downstream chain and its remaining manual steps
+  (overlay re-derivation, Gate's Go module bump while
+  `RELEASE_CASCADE_APP_PRIVATE_KEY` is stale) are in
+  [`docs/release-runbook.md`](docs/release-runbook.md). Read it before cutting a
+  release.
 - Renovate (`renovate.json`) is not installed for this repository and opens no
   pull requests here; geyserlite gets its upstream Geyser bumps from Renovate.
   If Renovate is enabled later, keep it from racing the workflow above over

@@ -10,13 +10,37 @@ Embedded mode resolves `libvialite.so` in this order:
 4. system library paths
 5. GitHub Release auto-download
 
-If `Options.Version` is empty, `auto`, or `latest`, auto-download first
-resolves the latest stable `minekube/vialite` release and then verifies the
-downloaded artifact against that release's `checksums.txt`. Set
-`Options.Version` to an exact tag, such as `v0.2.6`, to pin the artifact. Custom
-mirrors with an empty `Options.Version` use vialite's pinned mirror fallback
-release; custom mirrors that use `auto` or `latest` must expose `/latest` JSON
-containing a `tag_name` field.
+If `Options.Version` is empty, `auto`, or `latest`, auto-download resolves the
+latest stable `minekube/vialite` release and then verifies the downloaded
+artifact against that release's `checksums.txt`. Set `Options.Version` to an
+exact tag, such as `v0.3.1`, to pin the artifact.
+
+Custom mirrors are asked for their own latest release first, so a mirror
+deployment follows new releases exactly like GitHub does. A mirror that only
+serves files (no `/latest` JSON with a `tag_name` field) cannot answer, and
+that is the single case where vialite falls back to the compiled-in
+`DefaultMirrorVersion` instead of failing to start. It logs a warning naming
+the fallback version and the remedy:
+
+```text
+level=WARN msg="vialite: mirror does not report a latest release; using the pinned fallback runtime" mirror=... fallbackVersion=v0.3.1 hint="pin via.version to v0.3.1 to make this deliberate, or serve <mirror>/latest with {\"tag_name\":\"...\"} to follow your mirror's newest release"
+```
+
+An explicit `auto`/`latest` against a mirror that cannot answer stays a hard
+error: the operator asked for newest, and silently downgrading would be worse.
+
+Which runtime is actually in use is logged once per start, with its version and
+provenance, so support does not have to infer it from the runtime's own output:
+
+```text
+INFO msg="vialite: resolved runtime" kind=binary source=download version=v0.3.1 path=/home/gate/.cache/vialite/v0.3.1/<sha>/vialite-linux-amd64 url=https://github.com/minekube/vialite/releases/download/v0.3.1/vialite-linux-amd64
+INFO msg="vialite: resolved runtime" kind=binary source=cache version=v0.3.1 path=...
+INFO msg="vialite: resolved runtime" kind=binary source=binaryPath path=/usr/local/bin/vialite
+```
+
+`source` is one of `download`, `cache`, `binaryPath`, `env:VIALITE_BINARY`,
+`embedded`, `path` (binary) or `libraryPath`, `env:VIALITE_LIBRARY`,
+`embedded`, `system` (library).
 
 Set `Options.Offline=true` to disable auto-download.
 
