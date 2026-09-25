@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/minekube/vialite/compare/v0.3.1...v0.3.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **runtime:** follow a mirror's latest release + log the resolved runtime ([#29](https://github.com/minekube/vialite/issues/29)) ([e1f8e7d](https://github.com/minekube/vialite/commit/e1f8e7d52405cbb9677951de432e8d41f9b7b721))
+
 ## [0.3.1](https://github.com/minekube/vialite/compare/v0.3.0...v0.3.1) (2026-09-19)
 
 
