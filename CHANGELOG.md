@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/minekube/vialite/compare/v0.3.3...v0.3.4) (2026-09-25)
+
+
+### Bug Fixes
+
+* decode Gate classic legacy-forwarding handshake addresses past 255 chars ([a650813](https://github.com/minekube/vialite/commit/a6508132148f20fb4249899d07a579fca5634f67))
+
 ## [0.3.3](https://github.com/minekube/vialite/compare/v0.3.2...v0.3.3) (2026-09-25)
 
 
