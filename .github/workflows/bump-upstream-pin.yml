@@ -198,7 +198,12 @@ jobs:
           #  2. whether DefaultMirrorVersion in go/version.go still tracks recent
           #     releases. File-only mirrors fall back to that constant, so a stale
           #     constant pins those operators to an old runtime (and an old
-          #     ViaVersion ceiling) forever.
+          #     ViaVersion ceiling) forever. release-please rewrites the constant
+          #     in every release pull request (extra-files in
+          #     .release-please-config.json + the x-release-please-version
+          #     annotation in go/version.go), so a hit here means that wiring is
+          #     broken - not that somebody forgot to hand-edit the version.
+          #     go/version_test.go guards the same wiring in ci.yml.
           {
             echo '### Shipped runtime currency'
             echo
@@ -227,14 +232,30 @@ jobs:
 
           echo "| DefaultMirrorVersion | \`${MIRROR_VERSION}\` (latest release: \`${LATEST_RELEASE:-none}\`) |" >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "${MIRROR_VERSION}" != "${LATEST_RELEASE}" ]; then
+          # release-please rewrites DefaultMirrorVersion inside the release pull
+          # request it opens, i.e. BEFORE the tag and its assets exist, so the
+          # constant is legitimately ahead of releases/latest for the window
+          # between merging that pull request and the release being published.
+          # Only a constant OLDER than the previous release is the defect this
+          # check exists for (a file-only mirror pinned to an old runtime), so
+          # tell the two apart instead of failing on both.
+          MIRROR_IS_NEWER='false'
+          if [ "${MIRROR_VERSION}" != "${LATEST_RELEASE}" ] &&
+            [ "$(printf '%s\n%s\n' "${MIRROR_VERSION}" "${LATEST_RELEASE}" | sort -V | tail -n 1)" = "${MIRROR_VERSION}" ]; then
+            MIRROR_IS_NEWER='true'
+          fi
+
+          if [ "${MIRROR_IS_NEWER}" = 'true' ]; then
+            echo "::warning::DefaultMirrorVersion ${MIRROR_VERSION} is ahead of the latest published release ${LATEST_RELEASE}: release-please bumps the constant in the release pull request, so either the release is still publishing, or the chain stalled after the bump and no ${MIRROR_VERSION} release will ever appear."
+          elif [ "${MIRROR_VERSION}" != "${LATEST_RELEASE}" ]; then
             echo "::warning::DefaultMirrorVersion ${MIRROR_VERSION} does not track the latest release ${LATEST_RELEASE}; file-only mirrors will fall back to an older runtime."
           fi
 
-          if [ -n "${PREVIOUS_RELEASE}" ] && [ "${MIRROR_VERSION}" != "${LATEST_RELEASE}" ] &&
+          if [ -n "${PREVIOUS_RELEASE}" ] && [ "${MIRROR_IS_NEWER}" = 'false' ] &&
+            [ "${MIRROR_VERSION}" != "${LATEST_RELEASE}" ] &&
             [ "${MIRROR_VERSION}" != "${PREVIOUS_RELEASE}" ]; then
-            echo "::error::DefaultMirrorVersion ${MIRROR_VERSION} trails both ${LATEST_RELEASE} and ${PREVIOUS_RELEASE}; bump go/version.go so file-only mirrors do not stay on a stale runtime."
-            echo "> **DefaultMirrorVersion is stale.** It is \`${MIRROR_VERSION}\` while the recent releases are \`${LATEST_RELEASE}\` and \`${PREVIOUS_RELEASE}\`. File-only mirror deployments fall back to it, so they keep an old ViaVersion ceiling. Bump \`go/version.go\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::DefaultMirrorVersion ${MIRROR_VERSION} trails both ${LATEST_RELEASE} and ${PREVIOUS_RELEASE}; release-please no longer bumps go/version.go in the release pull request - check the x-release-please-version annotation and go/version_test.go."
+            echo "> **DefaultMirrorVersion is stale.** It is \`${MIRROR_VERSION}\` while the recent releases are \`${LATEST_RELEASE}\` and \`${PREVIOUS_RELEASE}\`. File-only mirror deployments fall back to it, so they keep an old ViaVersion ceiling. release-please bumps it inside every release pull request, so a red run here means \`go/version.go\` lost its \`x-release-please-version\` annotation or is no longer an \`extra-files\` entry in \`.release-please-config.json\`; \`ci.yml\` guards the same wiring in \`go/version_test.go\`." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 

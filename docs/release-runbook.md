@@ -24,6 +24,10 @@ is that chain, end to end, with the parts that are still manual called out.
 
 It **never merges**: a pin bump is a code change, not a lockfile refresh.
 
+The compiled-in mirror fallback (`DefaultMirrorVersion` in `go/version.go`) is
+maintained by release-please instead, inside the release pull request it opens
+for every release — see §2.2.
+
 Useful dispatches:
 
 ```sh
@@ -72,9 +76,19 @@ gh release view vX.Y.Z --repo minekube/vialite --json tagName,isDraft,assets \
   --jq '{tag:.tagName,draft:.isDraft,assets:[.assets[].name]}'
 ```
 
-- Bump `DefaultMirrorVersion` in [`go/version.go`](../go/version.go) to the new
-  tag if it trails (the daily workflow fails when it trails by more than one
-  release, so a green daily run is the check).
+- `DefaultMirrorVersion` in [`go/version.go`](../go/version.go) is **not** a hand
+  edit. The file is declared under `extra-files` in
+  [`.release-please-config.json`](../.release-please-config.json) and the
+  constant carries the `x-release-please-version` annotation release-please's
+  generic updater matches, so the release PR bumps it to `vX.Y.Z` in the same
+  commit that bumps `.release-please-manifest.json`. Do not edit the version by
+  hand and do not move or remove that annotation. Two guards fail closed if the
+  wiring ever breaks: [`go/version_test.go`](../go/version_test.go) (run by
+  `ci.yml`) checks the annotation, the token release-please rewrites, and the
+  agreement with the manifest; the daily `bump-upstream-pin.yml` run warns when
+  the constant does not track `releases/latest` (that includes the short window
+  in which it leads it, before the release is published) and exits 1 once it
+  trails by two releases.
 
 ### 2.3 Downstream Gate Go module (currently by hand)
 
