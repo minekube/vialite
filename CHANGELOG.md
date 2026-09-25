@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.5](https://github.com/minekube/vialite/compare/v0.3.4...v0.3.5) (2026-09-25)
+
+
+### Bug Fixes
+
+* **ci:** resolve the native artifact commit from main's first-parent line ([8058415](https://github.com/minekube/vialite/commit/8058415034c85779adde1e9619eaa4ee91c1e504))
+* **ci:** resolve the native artifact commit from main's first-parent line ([349528b](https://github.com/minekube/vialite/commit/349528be24109f312636c9c857d4eea79f2e4c03))
+
 ## [0.3.4](https://github.com/minekube/vialite/compare/v0.3.3...v0.3.4) (2026-09-25)
 
 
