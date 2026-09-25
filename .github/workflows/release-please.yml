@@ -28,39 +28,46 @@ jobs:
         if: ${{ steps.rp.outputs.release_created != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Never interpolate this JSON into the shell source: release notes
+          # routinely contain an apostrophe ("mirror's") and markdown-link
+          # parentheses, which closed the quoted assignment and made the step
+          # die with `syntax error near unexpected token '('` - silently
+          # skipping the merge and, with it, the whole release.
+          RELEASE_PR: ${{ steps.rp.outputs.pr }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          PR_JSON='${{ steps.rp.outputs.pr }}'
           PR_NUMBER=""
-          if [ -n "$PR_JSON" ]; then
-            PR_NUMBER=$(jq -r '.number // empty' <<<"$PR_JSON")
+          if [ -n "${RELEASE_PR}" ]; then
+            PR_NUMBER=$(jq -r '.number // empty' <<<"${RELEASE_PR}")
           fi
-          if [ -z "$PR_NUMBER" ]; then
-            RELEASE_BRANCH="release-please--branches--${{ github.ref_name }}--components--vialite"
+          if [ -z "${PR_NUMBER}" ]; then
+            RELEASE_BRANCH="release-please--branches--${REF_NAME}--components--vialite"
             PR_NUMBER=$(gh pr list \
-              --repo "${{ github.repository }}" \
-              --head "$RELEASE_BRANCH" \
+              --repo "${REPOSITORY}" \
+              --head "${RELEASE_BRANCH}" \
               --state open \
               --json number \
               --jq '.[0].number // empty')
           fi
 
-          if [ -z "$PR_NUMBER" ]; then
+          if [ -z "${PR_NUMBER}" ]; then
             echo "No release PR to merge."
             exit 0
           fi
 
-          gh pr merge "$PR_NUMBER" \
-            --repo "${{ github.repository }}" \
+          gh pr merge "${PR_NUMBER}" \
+            --repo "${REPOSITORY}" \
             --merge
 
           # Merges done with GITHUB_TOKEN do not trigger a new push workflow.
           # Run this workflow again on main so release-please observes the
           # merged release PR and creates the tag/GitHub release.
           gh workflow run release-please.yml \
-            --repo "${{ github.repository }}" \
-            --ref "${{ github.ref_name }}"
+            --repo "${REPOSITORY}" \
+            --ref "${REF_NAME}"
 
   trigger-release:
     needs: release-please
