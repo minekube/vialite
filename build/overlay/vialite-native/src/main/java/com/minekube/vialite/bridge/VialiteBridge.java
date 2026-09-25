@@ -23,7 +23,6 @@ import net.raphimc.viaproxy.ViaProxy;
 import net.raphimc.viaproxy.plugins.events.PreConnectEvent;
 import net.raphimc.viaproxy.protocoltranslator.ProtocolTranslator;
 import net.raphimc.viaproxy.protocoltranslator.viaproxy.ViaProxyConfig;
-import net.raphimc.viaproxy.proxy.client2proxy.Client2ProxyChannelInitializer;
 import net.raphimc.viaproxy.proxy.client2proxy.Client2ProxyHandler;
 import net.raphimc.viaproxy.saves.SaveManager;
 import net.raphimc.viaproxy.util.AddressUtil;
@@ -305,7 +304,7 @@ public final class VialiteBridge {
             throw new IllegalArgumentException("Mixed backend forwarding modes are not supported by vialite native runtime");
         }
         BackendRoute route = BackendRoute.from(backend);
-        NetServer server = new NetServer(new Client2ProxyChannelInitializer(clientHandlerSupplier()));
+        NetServer server = new NetServer(new VialiteClient2ProxyChannelInitializer(clientHandlerSupplier()));
         try {
             server.bind(AddressUtil.parse(bindAddress(nativeConfig, backend), null), false);
             SocketAddress localAddress = server.getChannel().localAddress();
