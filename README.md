@@ -56,11 +56,16 @@ not the first frontend compatibility layer for clients Gate cannot parse.
 | Native build scaffold | ViaProxy soft-fork overlay and isolate-thread-aware C ABI contract |
 | Release/update loop | CI, release-please, Renovate, checksummed Linux amd64/arm64 libraries and subprocess binaries, plus Windows amd64 subprocess binary |
 
-When `Options.Version` is empty, `auto`, or `latest`, the Go module checks the
-latest stable GitHub release, downloads the matching checksummed artifact into
-the local cache, and starts that artifact. Set `Version` to a release tag to
-pin an exact version, set `Offline` to disable network access, or
-set `BinaryPath`/`LibraryPath` to use a local artifact directly.
+When `Options.Version` is empty, `auto`, or `latest`, the Go module resolves the
+latest stable release, downloads the matching checksummed artifact into the
+local cache, and starts that artifact. A custom `Mirror` is asked for its own
+latest release first; only a file-only mirror that cannot answer falls back to
+the compiled-in `DefaultMirrorVersion`, and that fallback is logged as a
+warning. Set `Version` to a release tag to pin an exact version, set `Offline`
+to disable network access, or set `BinaryPath`/`LibraryPath` to use a local
+artifact directly. Every start logs one `vialite: resolved runtime` line naming
+the artifact version and where it came from (download, cache, embedded, local
+path).
 
 ## Go Quick Start
 

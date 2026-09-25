@@ -1,10 +1,13 @@
 package vialite
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,4 +81,51 @@ func writeExecutable(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// Every resolution path must name the runtime's provenance once at startup, so
+// an operator or supporter can tell whether the proxy runs a downloaded
+// release, a cache entry, an embedded build, or their own binary.
+func TestLocateLogsRuntimeProvenance(t *testing.T) {
+	binaryPath := writeExecutable(t, "vialite")
+	libraryPath := filepath.Join(t.TempDir(), "libvialite.so")
+	if err := os.WriteFile(libraryPath, []byte("so"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		run  func(context.Context, Options) (string, error)
+		opts Options
+		want []string
+	}{
+		{
+			name: "configured binaryPath",
+			run:  locateBinary,
+			opts: Options{BinaryPath: binaryPath, Offline: true},
+			want: []string{"kind=binary", "source=binaryPath", binaryPath},
+		},
+		{
+			name: "configured libraryPath",
+			run:  locateLibrary,
+			opts: Options{LibraryPath: libraryPath, Offline: true},
+			want: []string{"kind=library", "source=libraryPath", libraryPath},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			tt.opts.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			if _, err := tt.run(context.Background(), tt.opts); err != nil {
+				t.Fatalf("locate: %v", err)
+			}
+			line := logs.String()
+			wants := append([]string{"vialite: resolved runtime"}, tt.want...)
+			for _, want := range wants {
+				if !strings.Contains(line, want) {
+					t.Fatalf("resolution log %q does not contain %q", line, want)
+				}
+			}
+		})
+	}
 }

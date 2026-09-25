@@ -143,18 +143,30 @@ jobs:
 
       - name: Inspect bundled ViaVersion
         id: viaversion
-        if: steps.resolve.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
+          CURRENT_SHA: ${{ steps.resolve.outputs.current_sha }}
+          CHANGED: ${{ steps.resolve.outputs.changed }}
         run: |
           set -euo pipefail
 
           # The pin matters because ViaProxy's build.gradle bundles ViaVersion;
           # that bundled version is what decides which client protocols the
-          # released vialite artifact can translate.
+          # released vialite artifact can translate. Inspect the candidate when
+          # the pin would move, and the shipped pin otherwise: the second case is
+          # how a ViaVersion release that no ViaProxy release carries yet becomes
+          # visible instead of silent.
+          if [ "${CHANGED}" = 'true' ]; then
+            INSPECTED_SHA="${CANDIDATE_SHA}"
+            INSPECTED_DESCRIPTION='candidate'
+          else
+            INSPECTED_SHA="${CURRENT_SHA}"
+            INSPECTED_DESCRIPTION='shipped pin'
+          fi
+
           BUNDLED="$(gh api \
-            "repos/${UPSTREAM_REPOSITORY}/contents/build.gradle?ref=${CANDIDATE_SHA}" \
+            "repos/${UPSTREAM_REPOSITORY}/contents/build.gradle?ref=${INSPECTED_SHA}" \
             --jq .content | base64 -d |
             sed -n 's/.*includeInJar "com\.viaversion:viaversion-common:\([^"]*\)".*/\1/p' | head -n 1)"
           LATEST="$(gh api "repos/${VIAVERSION_REPOSITORY}/releases/latest" --jq .tag_name)"
@@ -162,10 +174,71 @@ jobs:
           {
             echo "bundled=${BUNDLED}"
             echo "latest=${LATEST}"
+            echo "inspected=${INSPECTED_SHA}"
           } >> "$GITHUB_OUTPUT"
 
-          echo "ViaVersion bundled by the candidate: ${BUNDLED}"
-          echo "Latest upstream ViaVersion release:  ${LATEST}"
+          echo "Inspected (${INSPECTED_DESCRIPTION}): ${INSPECTED_SHA}"
+          echo "ViaVersion bundled there:          ${BUNDLED}"
+          echo "Latest upstream ViaVersion:        ${LATEST}"
+
+      - name: Check shipped runtime currency
+        id: currency
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLED_VIAVERSION: ${{ steps.viaversion.outputs.bundled }}
+          LATEST_VIAVERSION: ${{ steps.viaversion.outputs.latest }}
+          INSPECTED_SHA: ${{ steps.viaversion.outputs.inspected }}
+        run: |
+          set -euo pipefail
+
+          # Two facts nobody watches between Minecraft releases:
+          #  1. whether the shipped pin already bundles the newest upstream
+          #     ViaVersion (if it does not, the next ViaProxy release carries it
+          #     and a bump is unavoidable - say so now, not on the support ticket),
+          #  2. whether DefaultMirrorVersion in go/version.go still tracks recent
+          #     releases. File-only mirrors fall back to that constant, so a stale
+          #     constant pins those operators to an old runtime (and an old
+          #     ViaVersion ceiling) forever.
+          {
+            echo '### Shipped runtime currency'
+            echo
+            echo "| | |"
+            echo '|---|---|'
+            echo "| Inspected ref | [\`${INSPECTED_SHA:0:7}\`](https://github.com/${UPSTREAM_REPOSITORY}/commit/${INSPECTED_SHA}) |"
+            echo "| ViaVersion bundled there | \`${BUNDLED_VIAVERSION:-unknown}\` |"
+            echo "| Latest upstream ViaVersion | \`${LATEST_VIAVERSION:-unknown}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "${BUNDLED_VIAVERSION}" ] && [ -n "${LATEST_VIAVERSION}" ] &&
+            [ "${BUNDLED_VIAVERSION}" != "${LATEST_VIAVERSION}" ]; then
+            echo "::warning::build/via.version bundles ViaVersion ${BUNDLED_VIAVERSION} while upstream released ${LATEST_VIAVERSION}; a newer ViaProxy release is required before the pin can cover it."
+            echo "> Upstream released ViaVersion \`${LATEST_VIAVERSION}\`, the shipped pin bundles \`${BUNDLED_VIAVERSION}\`. Watch upstream ViaProxy for the release that carries it; nothing to merge yet." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          MIRROR_VERSION="$(sed -n 's/.*DefaultMirrorVersion *= *"\(v[^"]*\)".*/\1/p' go/version.go | head -n 1)"
+          if [ -z "${MIRROR_VERSION}" ]; then
+            echo "::error::could not read DefaultMirrorVersion from go/version.go"
+            exit 1
+          fi
+
+          RECENT="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=2" --jq '.[].tag_name')"
+          LATEST_RELEASE="$(echo "${RECENT}" | head -n 1)"
+          PREVIOUS_RELEASE="$(echo "${RECENT}" | tail -n 1)"
+
+          echo "| DefaultMirrorVersion | \`${MIRROR_VERSION}\` (latest release: \`${LATEST_RELEASE:-none}\`) |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${MIRROR_VERSION}" != "${LATEST_RELEASE}" ]; then
+            echo "::warning::DefaultMirrorVersion ${MIRROR_VERSION} does not track the latest release ${LATEST_RELEASE}; file-only mirrors will fall back to an older runtime."
+          fi
+
+          if [ -n "${PREVIOUS_RELEASE}" ] && [ "${MIRROR_VERSION}" != "${LATEST_RELEASE}" ] &&
+            [ "${MIRROR_VERSION}" != "${PREVIOUS_RELEASE}" ]; then
+            echo "::error::DefaultMirrorVersion ${MIRROR_VERSION} trails both ${LATEST_RELEASE} and ${PREVIOUS_RELEASE}; bump go/version.go so file-only mirrors do not stay on a stale runtime."
+            echo "> **DefaultMirrorVersion is stale.** It is \`${MIRROR_VERSION}\` while the recent releases are \`${LATEST_RELEASE}\` and \`${PREVIOUS_RELEASE}\`. File-only mirror deployments fall back to it, so they keep an old ViaVersion ceiling. Bump \`go/version.go\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "Shipped runtime currency checked."
 
       - name: Update pin
         id: update

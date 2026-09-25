@@ -15,20 +15,24 @@ func locateBinary(ctx context.Context, opts Options) (string, error) {
 		if err := executableAt(opts.BinaryPath); err != nil {
 			return "", fmt.Errorf("vialite: BinaryPath %q: %w", opts.BinaryPath, err)
 		}
+		logRuntimeResolution(opts, "binary", "source", "binaryPath", "path", opts.BinaryPath)
 		return opts.BinaryPath, nil
 	}
 	if env := os.Getenv("VIALITE_BINARY"); env != "" {
 		if err := executableAt(env); err != nil {
 			return "", fmt.Errorf("vialite: $VIALITE_BINARY %q: %w", env, err)
 		}
+		logRuntimeResolution(opts, "binary", "source", "env:VIALITE_BINARY", "path", env)
 		return env, nil
 	}
 	if path, ok, err := extractEmbeddedBinary(); err != nil && !errors.Is(err, ErrUnsupportedEmbeddedMode) {
 		return "", err
 	} else if ok {
+		logRuntimeResolution(opts, "binary", "source", "embedded", "path", path)
 		return path, nil
 	}
 	if path, err := exec.LookPath("vialite"); err == nil {
+		logRuntimeResolution(opts, "binary", "source", "path", "path", path)
 		return path, nil
 	}
 	if !opts.Offline {
@@ -46,22 +50,26 @@ func locateLibrary(ctx context.Context, opts Options) (string, error) {
 		if err := fileAt(opts.LibraryPath); err != nil {
 			return "", fmt.Errorf("vialite: LibraryPath %q: %w", opts.LibraryPath, err)
 		}
+		logRuntimeResolution(opts, "library", "source", "libraryPath", "path", opts.LibraryPath)
 		return opts.LibraryPath, nil
 	}
 	if env := os.Getenv("VIALITE_LIBRARY"); env != "" {
 		if err := fileAt(env); err != nil {
 			return "", fmt.Errorf("vialite: $VIALITE_LIBRARY %q: %w", env, err)
 		}
+		logRuntimeResolution(opts, "library", "source", "env:VIALITE_LIBRARY", "path", env)
 		return env, nil
 	}
 	if path, ok, err := extractEmbeddedLibrary(); err != nil && !errors.Is(err, ErrUnsupportedEmbeddedMode) {
 		return "", err
 	} else if ok {
+		logRuntimeResolution(opts, "library", "source", "embedded", "path", path)
 		return path, nil
 	}
 	for _, dir := range systemLibDirs() {
 		p := filepath.Join(dir, libraryName())
 		if fileAt(p) == nil {
+			logRuntimeResolution(opts, "library", "source", "system", "path", p)
 			return p, nil
 		}
 	}

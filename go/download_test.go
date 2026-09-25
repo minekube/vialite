@@ -1,8 +1,10 @@
 package vialite
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -255,7 +257,11 @@ func TestDownloadAssetAutoVersionUsesLatestRelease(t *testing.T) {
 	}
 }
 
-func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultMirrorVersion(t *testing.T) {
+// An unset version with a custom mirror must follow the mirror's own latest
+// release, exactly like "auto"/"latest" do. Before this behaviour existed the
+// mirror silently pinned the compiled-in DefaultMirrorVersion, so the operator
+// kept running a stale runtime (and an old ViaVersion ceiling) forever.
+func TestDownloadAssetEmptyVersionWithMirrorUsesMirrorLatest(t *testing.T) {
 	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
 	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
 	t.Cleanup(func() {
@@ -264,14 +270,19 @@ func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultMirrorVersion(t *testing.
 
 	const body = "native-binary"
 	const sha = "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	var sawLatest bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/latest":
-			t.Fatalf("empty custom-mirror version unexpectedly requested latest release metadata")
-		case "/" + DefaultMirrorVersion + "/checksums.txt":
+			sawLatest = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
+		case "/v9.9.9/checksums.txt":
 			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
-		case "/" + DefaultMirrorVersion + "/vialite-linux-arm64":
+		case "/v9.9.9/vialite-linux-arm64":
 			_, _ = w.Write([]byte(body))
+		case "/" + DefaultMirrorVersion + "/checksums.txt":
+			t.Fatalf("empty mirror version silently used the pinned fallback %s instead of the mirror's latest release", DefaultMirrorVersion)
 		default:
 			http.NotFound(w, r)
 		}
@@ -284,8 +295,135 @@ func TestDownloadAssetEmptyVersionWithMirrorUsesDefaultMirrorVersion(t *testing.
 	if err != nil {
 		t.Fatalf("downloadAsset empty mirror version: %v", err)
 	}
+	if !sawLatest {
+		t.Fatal("downloadAsset with an empty version did not ask the mirror for its latest release")
+	}
+	if !strings.Contains(path, filepath.Join("vialite", "v9.9.9", sha)) {
+		t.Fatalf("download path = %q, want the mirror's latest version and checksum", path)
+	}
+}
+
+// A mirror that cannot report a latest release (a plain file mirror) must keep
+// working, but it must not do so silently: the operator gets a loud warning
+// naming the pinned fallback version and how to get newest instead.
+func TestDownloadAssetEmptyVersionWithSilentMirrorWarnsAndFallsBack(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-binary"
+	const sha = "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/latest":
+			http.NotFound(w, r)
+		case "/" + DefaultMirrorVersion + "/checksums.txt":
+			_, _ = w.Write([]byte(sha + "  vialite-linux-arm64\n"))
+		case "/" + DefaultMirrorVersion + "/vialite-linux-arm64":
+			_, _ = w.Write([]byte(body))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	path, err := downloadAsset(context.Background(), Options{Mirror: srv.URL, Logger: logger}, assetKindBinary)
+	if err != nil {
+		t.Fatalf("downloadAsset empty mirror version: %v", err)
+	}
 	if !strings.Contains(path, filepath.Join("vialite", DefaultMirrorVersion, sha)) {
 		t.Fatalf("download path = %q, want default mirror version and checksum", path)
+	}
+	line := logs.String()
+	if !strings.Contains(line, "level=WARN") {
+		t.Fatalf("mirror fallback was silent, logs = %q", line)
+	}
+	if !strings.Contains(line, "pinned fallback runtime") {
+		t.Fatalf("mirror fallback warning does not name the fallback, logs = %q", line)
+	}
+	if !strings.Contains(line, DefaultMirrorVersion) {
+		t.Fatalf("mirror fallback warning does not name %s, logs = %q", DefaultMirrorVersion, line)
+	}
+}
+
+// An explicit latest/auto request against a mirror that cannot answer is a hard
+// error: the operator asked for newest, and quietly downgrading would be worse
+// than failing the start.
+func TestDownloadAssetExplicitLatestWithSilentMirrorFails(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "arm64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	if _, err := downloadAsset(context.Background(), Options{Version: "latest", Mirror: srv.URL}, assetKindBinary); err == nil {
+		t.Fatal("downloadAsset explicit latest with a silent mirror succeeded, want a hard error")
+	}
+}
+
+// Support and operators need one startup line naming the runtime that is
+// actually running and where it came from: the artifact version decides the
+// ViaVersion protocol ceiling, and nothing else in the logs names it.
+func TestDownloadAssetLogsResolvedRuntimeVersionAndSource(t *testing.T) {
+	oldGOOS, oldGOARCH := runtimeGOOS, runtimeGOARCH
+	runtimeGOOS, runtimeGOARCH = "linux", "amd64"
+	t.Cleanup(func() {
+		runtimeGOOS, runtimeGOARCH = oldGOOS, oldGOARCH
+	})
+
+	const body = "native-binary"
+	const sha = "9ec4c62cbabe2558224228ab3254a4e20e24cdf57a2cf3be50f37111723595e5"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v9.9.9/checksums.txt":
+			_, _ = w.Write([]byte(sha + "  vialite-linux-amd64\n"))
+		case "/v9.9.9/vialite-linux-amd64":
+			_, _ = w.Write([]byte(body))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	opts := Options{Version: "v9.9.9", Mirror: srv.URL, Logger: logger}
+
+	path, err := downloadAsset(context.Background(), opts, assetKindBinary)
+	if err != nil {
+		t.Fatalf("downloadAsset: %v", err)
+	}
+	downloaded := logs.String()
+	for _, want := range []string{"vialite: resolved runtime", "kind=binary", "source=download", "version=v9.9.9", path} {
+		if !strings.Contains(downloaded, want) {
+			t.Fatalf("download log line %q does not contain %q", downloaded, want)
+		}
+	}
+
+	logs.Reset()
+	if _, err := downloadAsset(context.Background(), opts, assetKindBinary); err != nil {
+		t.Fatalf("downloadAsset cached: %v", err)
+	}
+	cached := logs.String()
+	for _, want := range []string{"vialite: resolved runtime", "source=cache", "version=v9.9.9", path} {
+		if !strings.Contains(cached, want) {
+			t.Fatalf("cache log line %q does not contain %q", cached, want)
+		}
 	}
 }
 
