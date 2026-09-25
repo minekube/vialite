@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/minekube/vialite/compare/v0.3.2...v0.3.3) (2026-09-25)
+
+
+### Bug Fixes
+
+* **ci:** don't let a release note's apostrophe break the release auto-merge ([#31](https://github.com/minekube/vialite/issues/31)) ([9833d1a](https://github.com/minekube/vialite/commit/9833d1a9e15e28556e0d3467974e6918e19a82f7))
+
 ## [0.3.2](https://github.com/minekube/vialite/compare/v0.3.1...v0.3.2) (2026-09-25)
 
 
