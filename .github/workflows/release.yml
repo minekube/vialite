@@ -33,7 +33,18 @@ jobs:
 
           mkdir -p artifact-downloads artifacts
 
-          NATIVE_SHA=$(git log -n 1 --format=%H -- \
+          # Resolve the commit whose native-image artifacts this release bundles.
+          # It must be the commit that *landed on main*: pull_request runs
+          # deliberately skip the artifact upload, and `gh run list --branch=main`
+          # below only ever sees main-branch runs. Plain `git log -- build` does
+          # not give that: history simplification drops a merge commit that is
+          # TREESAME to one of its parents, so a PR whose build/ change arrives
+          # only through the merge resolves to the un-landed PR head (e.g. v0.3.4
+          # resolved 4217e9e, which has no main-branch run) and the wait below can
+          # never be satisfied. --first-parent walks the landed line on main, so a
+          # PR-merged change resolves to its merge commit, whose push run uploaded
+          # the artifacts, and a direct push resolves to itself.
+          NATIVE_SHA=$(git log -n 1 --first-parent --format=%H -- \
             build \
             .github/workflows/native-image.yml)
 
