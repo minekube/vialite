@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.6](https://github.com/minekube/vialite/compare/v0.3.5...v0.3.6) (2026-09-26)
+
+
+### Bug Fixes
+
+* **version:** keep the mirror fallback constant current from the release PR ([#37](https://github.com/minekube/vialite/issues/37)) ([40469a5](https://github.com/minekube/vialite/commit/40469a58cd60fc512b10eac510a5098182b183b9))
+
 ## [0.3.5](https://github.com/minekube/vialite/compare/v0.3.4...v0.3.5) (2026-09-25)
 
 

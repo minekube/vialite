@@ -16,7 +16,7 @@ const (
 	// DefaultDownloadBase, and .github/workflows/bump-upstream-pin.yml fails when
 	// it trails `releases/latest` by more than one release. See
 	// docs/release-runbook.md and the guards in version_test.go.
-	DefaultMirrorVersion    = "v0.3.5" // x-release-please-version
+	DefaultMirrorVersion    = "v0.3.6" // x-release-please-version
 	DefaultDownloadBase     = "https://github.com/minekube/vialite/releases/download"
 	DefaultLatestReleaseURL = "https://api.github.com/repos/minekube/vialite/releases/latest"
 )
