@@ -73,8 +73,14 @@ Relevant workflow skills, when the agent runtime provides them:
   means "latest", exactly like `auto`/`latest`. With a `Mirror` set, the
   mirror's own `/latest` is asked first; only a mirror that cannot answer falls
   back to `DefaultMirrorVersion`, and that fallback logs a warning naming the
-  version and the remedy. `DefaultMirrorVersion` must stay on the current
-  release (the daily workflow fails when it trails by more than one release).
+  version and the remedy. `DefaultMirrorVersion` is owned by release-please, not
+  by hand: `.release-please-config.json` declares `go/version.go` under
+  `extra-files` and the constant carries the `x-release-please-version`
+  annotation, so the release pull request bumps it to the released `vX.Y.Z`
+  alongside `.release-please-manifest.json`; `go/version_test.go` fails when that
+  wiring or the manifest agreement breaks, and the daily workflow still fails
+  closed when the constant trails by more than one release. Never hand-edit the
+  version and never move that annotation.
   Never make an explicit `auto`/`latest` silently downgrade.
 - Every start logs one `vialite: resolved runtime` line with the artifact
   version and provenance (download/cache/binaryPath/env/embedded/path/library
