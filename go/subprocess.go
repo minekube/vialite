@@ -7,10 +7,39 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// errSubprocessExitedBeforeReady is reported when the runtime died before it
+// published the backend listener Gate dials. It is distinct from a readiness
+// timeout so callers can tell "the runtime is gone" from "the runtime is slow".
+var errSubprocessExitedBeforeReady = errors.New("vialite: subprocess exited before backend listener became ready")
+
+// describeBackendBinds renders the backend loopback addresses the runtime was
+// supposed to publish, so a readiness failure names which listener is missing
+// instead of only saying that something was not ready.
+func describeBackendBinds(backends map[string]string) string {
+	type entry struct{ name, addr string }
+	byAddr := make(map[string]entry, len(backends))
+	for name, addr := range backends {
+		existing, ok := byAddr[addr]
+		// storeBackendAddress records both the original and the lookup name for
+		// the same address; keep one deterministic label per address.
+		if !ok || name < existing.name {
+			byAddr[addr] = entry{name: name, addr: addr}
+		}
+	}
+	entries := make([]string, 0, len(byAddr))
+	for _, e := range byAddr {
+		entries = append(entries, e.name+"="+e.addr)
+	}
+	sort.Strings(entries)
+	return strings.Join(entries, ", ")
+}
 
 type subprocessRunner struct {
 	healthy  atomic.Bool
@@ -183,19 +212,37 @@ func waitBackendListeners(ctx context.Context, done <-chan error, backends map[s
 	defer ticker.Stop()
 	for {
 		if allBackendsDialable(backends) {
+			// A dialable address is not proof that *this* runtime owns the
+			// listener: a foreign process on a pinned bind port (via.bind) accepts
+			// every connection the readiness check makes. Never report readiness
+			// for a runtime that has already exited - Gate would come up
+			// "healthy" with a dead hop and every join would fail later with a
+			// misleading "not started".
+			select {
+			case err := <-done:
+				if err == nil {
+					err = errSubprocessExitedBeforeReady
+				}
+				return true, err
+			default:
+			}
 			return false, nil
 		}
 		select {
 		case err := <-done:
 			if err == nil {
-				err = errors.New("vialite: subprocess exited before backend listener became ready")
+				err = errSubprocessExitedBeforeReady
 			}
 			return true, err
 		case <-waitCtx.Done():
-			if ctx.Err() != nil {
-				return false, ctx.Err()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, fmt.Errorf(
+					"vialite: subprocess backend listener did not become ready within the caller's deadline (stage: runtime startup, expected %s): %w",
+					describeBackendBinds(backends), ctxErr)
 			}
-			return false, errors.New("vialite: subprocess backend listener did not become ready")
+			return false, fmt.Errorf(
+				"vialite: subprocess backend listener did not become ready (stage: runtime startup, expected %s)",
+				describeBackendBinds(backends))
 		case <-ticker.C:
 		}
 	}
@@ -208,20 +255,35 @@ func waitBackendListenersProcess(ctx context.Context, proc *subprocessBackendPro
 	defer ticker.Stop()
 	for {
 		if allBackendsDialable(backends) {
+			// See waitBackendListeners: a dialable address does not prove this
+			// runtime owns the listener, so an exited process always wins.
+			select {
+			case <-proc.done:
+				err := proc.err()
+				if err == nil {
+					err = errSubprocessExitedBeforeReady
+				}
+				return true, err
+			default:
+			}
 			return false, nil
 		}
 		select {
 		case <-proc.done:
 			err := proc.err()
 			if err == nil {
-				err = errors.New("vialite: subprocess exited before backend listener became ready")
+				err = errSubprocessExitedBeforeReady
 			}
 			return true, err
 		case <-waitCtx.Done():
-			if ctx.Err() != nil {
-				return false, ctx.Err()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, fmt.Errorf(
+					"vialite: subprocess backend listener did not become ready within the caller's deadline (stage: runtime startup, backend %s, expected %s): %w",
+					proc.name, describeBackendBinds(backends), ctxErr)
 			}
-			return false, errors.New("vialite: subprocess backend listener did not become ready")
+			return false, fmt.Errorf(
+				"vialite: subprocess backend listener did not become ready (stage: runtime startup, backend %s, expected %s)",
+				proc.name, describeBackendBinds(backends))
 		case <-ticker.C:
 		}
 	}
@@ -576,7 +638,18 @@ func concreteLoopbackBind(bind string) (string, error) {
 		return "", err
 	}
 	if port != "0" {
-		return bind, nil
+		// A pinned port is handed to the runtime verbatim, so this host must be
+		// able to bind it. Readiness is decided by dialing the address, which a
+		// foreign listener on the same port satisfies, so without this check the
+		// runtime can fail to own its listener while the Server still reports
+		// ready (measured 2026-09-27: Gate came up "healthy" with a dead runtime
+		// and every join failed with "vialite: not started"). Fail here, naming
+		// the address, instead of publishing a listener the runtime does not own.
+		ln, err := net.Listen("tcp", bind)
+		if err != nil {
+			return "", fmt.Errorf("bind %s is not available for the runtime: %w", bind, err)
+		}
+		return bind, ln.Close()
 	}
 	if host == "" {
 		host = "127.0.0.1"

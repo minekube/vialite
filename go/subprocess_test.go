@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -673,6 +674,11 @@ var cfg nativeConfig
 			time.Sleep(d)
 		}
 	}
+	// VIALITE_HELPER_SKIP_BIND models a runtime that stays alive but never
+	// publishes its backend listener (the readiness wait must bound and name it).
+	if os.Getenv("VIALITE_HELPER_SKIP_BIND") != "" {
+		select {}
+	}
 	for _, bind := range binds {
 		ln, err := net.Listen("tcp", bind)
 		if err != nil {
@@ -712,3 +718,150 @@ var cfg nativeConfig
 	select {}
 }
 `
+
+// TestSubprocessRejectsBindOwnedByAnotherProcess is the regression guard for the
+// shape measured on 2026-09-27 (kanban t_c79737e4, row f3).
+//
+// `via.bind` names a fixed loopback port, a foreign process already holds it, and
+// the runtime therefore can never own its backend listener. Readiness used to be
+// decided by dialing the configured address alone, which the foreign listener
+// satisfies, so the Server reported ready and Gate started "healthy" with a
+// runtime that was already gone: every join then failed with the misleading
+// `vialite: not started` and the real backend was never contacted. A pinned bind
+// the runtime cannot own must fail closed and name the address.
+func TestSubprocessRejectsBindOwnedByAnotherProcess(t *testing.T) {
+	holder, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("hold bind port: %v", err)
+	}
+	defer holder.Close()
+	heldAddr := holder.Addr().String()
+	go func() {
+		for {
+			conn, err := holder.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	bin := buildSubprocessHelper(t)
+	opts, err := Options{
+		Mode:       ModeSubprocess,
+		BinaryPath: bin,
+		Bind:       heldAddr, // operator pinned the port another process owns
+		Backends:   []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancelReady()
+	err = srv.WaitReady(readyCtx)
+	if err == nil {
+		cancel()
+		<-done
+		t.Fatalf("WaitReady = nil with bind %s owned by another process: a runtime that cannot "+
+			"own its listener must not report ready", heldAddr)
+	}
+	if !strings.Contains(err.Error(), heldAddr) {
+		t.Errorf("startup error %q does not name the bind address %s", err, heldAddr)
+	}
+	if !strings.Contains(err.Error(), "lobby") {
+		t.Errorf("startup error %q does not name the backend whose listener could not be published", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("Start did not return")
+	}
+}
+
+// TestSubprocessReadinessNeverOutlivesTheSubprocess pins the ordering invariant of
+// the readiness wait: a dialable address is not proof that *this* runtime owns the
+// listener, so an already-exited subprocess must win over the dialable check.
+func TestSubprocessReadinessNeverOutlivesTheSubprocess(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	done := make(chan error, 1)
+	exitErr := errors.New("exit status 5")
+	done <- exitErr
+	backends := map[string]string{"lobby": ln.Addr().String()}
+
+	processDone, err := waitBackendListeners(context.Background(), done, backends)
+	if err == nil {
+		t.Fatalf("waitBackendListeners reported ready (processDone=%t) although the subprocess had "+
+			"already exited", processDone)
+	}
+	if !processDone {
+		t.Errorf("processDone = false, want true: the exit was observed, not just dialability")
+	}
+	if !errors.Is(err, exitErr) {
+		t.Errorf("error = %v, want the subprocess exit %v", err, exitErr)
+	}
+	if !errors.Is(err, errSubprocessExitedBeforeReady) && !errors.Is(err, exitErr) {
+		t.Errorf("error = %v, want the subprocess-exit reason", err)
+	}
+}
+
+// TestSubprocessNotReadyErrorNamesTheBind limits the "did not become ready" wait:
+// when the runtime stays alive but never publishes its listener, the error must
+// name the address it was supposed to publish and the stage that failed, not just
+// say "not ready".
+func TestSubprocessNotReadyErrorNamesTheBind(t *testing.T) {
+	t.Setenv("VIALITE_HELPER_SKIP_BIND", "1")
+	bin := buildSubprocessHelper(t)
+
+	opts, err := Options{
+		Mode:       ModeSubprocess,
+		BinaryPath: bin,
+		Bind:       "127.0.0.1:0",
+		Backends:   []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	// The runner applies its own 10s readiness fallback when the Start context has
+	// no deadline, so observe from outside that bound.
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelReady()
+	err = srv.WaitReady(readyCtx)
+	if err == nil {
+		cancel()
+		t.Fatal("WaitReady = nil although the runtime never published its listener")
+	}
+	if !strings.Contains(err.Error(), "did not become ready") {
+		t.Errorf("error = %v, want the bounded readiness failure", err)
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1:") {
+		t.Errorf("error %q does not name the address that never became ready", err)
+	}
+	if !strings.Contains(err.Error(), "lobby") {
+		t.Errorf("error %q does not name the backend", err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Error("Start did not return")
+	}
+}
