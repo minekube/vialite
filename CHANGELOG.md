@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.8](https://github.com/minekube/vialite/compare/v0.3.7...v0.3.8) (2026-09-27)
+
+
+### Bug Fixes
+
+* **bridge:** bound and name the hop's pre-connect stage ([#45](https://github.com/minekube/vialite/issues/45)) ([54df94e](https://github.com/minekube/vialite/commit/54df94e88c464363fbcbe47ab244e26ae08f3474))
+
 ## [0.3.7](https://github.com/minekube/vialite/compare/v0.3.6...v0.3.7) (2026-09-27)
 
 
