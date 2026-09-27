@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.7](https://github.com/minekube/vialite/compare/v0.3.6...v0.3.7) (2026-09-27)
+
+
+### Bug Fixes
+
+* **subprocess:** fail closed when the runtime cannot own its bind listener ([#40](https://github.com/minekube/vialite/issues/40)) ([bb00022](https://github.com/minekube/vialite/commit/bb00022463d9fdb65df39b2465328d831f3518da))
+
 ## [0.3.6](https://github.com/minekube/vialite/compare/v0.3.5...v0.3.6) (2026-09-26)
 
 
