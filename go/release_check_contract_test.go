@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -113,6 +114,12 @@ var releaseCheckReleasePRFiles = []string{
 // means someone started satisfying contexts for branch protection and the
 // required-check rule in the acceptance notes has to be re-decided first.
 var releaseCheckWantMirroredContexts []string
+
+// releaseCheckWrappedRule matches releaseCheckRequiredCheckRule even where the
+// YAML comment wraps it across lines: ci.yml carries the sentence on one line,
+// craftless.yml breaks it after "must". A mutation that only matched the
+// unwrapped form would silently no-op on craftless.yml.
+var releaseCheckWrappedRule = regexp.MustCompile(`must\s+(?:#\s*)?never become required status checks on`)
 
 // releaseCheckWorkflow is one workflow file and the facts about it that the
 // disposition rests on.
@@ -358,8 +365,11 @@ func TestReleaseBranchCheckContractRejectsMutations(t *testing.T) {
 			return c
 		},
 		"craftless-note-deleted": func(c releaseCheckContract) releaseCheckContract {
-			c.noteContents[craftless.path] = strings.ReplaceAll(
-				c.noteContents[craftless.path], releaseCheckRequiredCheckRule, "may be required")
+			// craftless.yml wraps this sentence across two comment lines, so a
+			// literal replacement finds nothing there and the "mutation" would
+			// silently be a no-op.
+			c.noteContents[craftless.path] = releaseCheckWrappedRule.ReplaceAllString(
+				c.noteContents[craftless.path], "may be required")
 			return c
 		},
 		"ci-note-marker-removed": func(c releaseCheckContract) releaseCheckContract {
@@ -373,7 +383,13 @@ func TestReleaseBranchCheckContractRejectsMutations(t *testing.T) {
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
-			err := validateReleaseCheckContract(mutate(live), releaseCheckReleasePRFiles)
+			mutated := mutate(cloneReleaseCheckContract(live))
+			if reflect.DeepEqual(mutated, live) {
+				t.Fatalf("%s mutation %q changes nothing, so it cannot show the guard has teeth; "+
+					"match the text as it is actually written (wrapped comment lines included) instead of "+
+					"relying on another mutation's leaked state to fail it", releaseCheckContractPrefix, name)
+			}
+			err := validateReleaseCheckContract(mutated, releaseCheckReleasePRFiles)
 			if err == nil {
 				t.Fatalf("%s mutation %q was accepted", releaseCheckContractPrefix, name)
 			}
@@ -383,6 +399,26 @@ func TestReleaseBranchCheckContractRejectsMutations(t *testing.T) {
 			}
 		})
 	}
+}
+
+// cloneReleaseCheckContract gives every mutation its own copy. The contract
+// holds a slice and a map, so a mutation assigning into either would otherwise
+// persist into the live value - and into every later mutation. That made the
+// matrix order-dependent (the map above iterates in random order) and let one
+// mutation be reported as caught by another mutation's leak.
+func cloneReleaseCheckContract(c releaseCheckContract) releaseCheckContract {
+	clone := c
+	clone.gated = append([]releaseCheckWorkflow(nil), c.gated...)
+	for i := range clone.gated {
+		clone.gated[i].paths = append([]string(nil), c.gated[i].paths...)
+	}
+	clone.control.paths = append([]string(nil), c.control.paths...)
+	clone.mirroredContexts = append([]string(nil), c.mirroredContexts...)
+	clone.noteContents = make(map[string]string, len(c.noteContents))
+	for path, contents := range c.noteContents {
+		clone.noteContents[path] = contents
+	}
+	return clone
 }
 
 // TestReleaseCheckPathMatcher pins the matcher used above: GitHub's `paths`
