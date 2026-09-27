@@ -10,6 +10,80 @@ on:
       - 'build/**'
       - 'Taskfile.yml'
       - 'mise.toml'
+  # Acceptance note — every vialite release records a failed `pull_request` run
+  # for this workflow, and ci.yml records a second one: two red runs per
+  # release, each having executed no job at all, neither of which can go green.
+  # It is not a broken job and not this `paths` filter: it is GitHub's
+  # documented approval gate for pull requests that a workflow created with
+  # `GITHUB_TOKEN`.
+  #
+  #   "When a pull request is created or updated by a workflow using
+  #    `GITHUB_TOKEN`, `pull_request` events with the `opened`, `synchronize`,
+  #    or `reopened` activity types create workflow runs that require approval.
+  #    A user with write access to the repository can approve these runs from
+  #    the pull request page. With the exception of `workflow_dispatch` and
+  #    `repository_dispatch`, other `GITHUB_TOKEN`-triggered events do not
+  #    create workflow runs at all."
+  #   — GitHub docs, "Events that trigger workflows" -> `pull_request`
+  #
+  # Vialite is the worst-affected repository: ci.yml carries the same gate, so
+  # one release costs two red checks.
+  #
+  # The release PR matches these paths on purpose. release-please rewrites
+  # `go/version.go` (declared under "extra-files" in
+  # .release-please-config.json; PR #37 added the `x-release-please-version`
+  # annotation its generic updater matches) together with
+  # `.release-please-manifest.json` and `CHANGELOG.md`, so `go/**` matches. A
+  # workflow whose filter does *not* match creates no run at all, which is the
+  # control: `native-image.yml` (filter `build/**`, its own file) has never
+  # produced a run on a release PR.
+  #
+  # Measured, read-only, 2026-09-27: release 0.3.7 (PR #41, head 0c57342c)
+  # produced runs 36312571624 (`Craftless compatibility`) and 36312571573
+  # (`CI`); release 0.3.6 (PR #39, head 26408d9a) produced 36204128261 and
+  # 36204128268. All four are `event=pull_request`,
+  # `actor=github-actions[bot]`, `jobs.total_count=0`, `conclusion=failure`, and
+  # they are the only `github-actions[bot]` pull_request runs in this
+  # repository's whole action history. While the release PR is open GitHub
+  # presents such a run as awaiting approval; once the PR is merged unapproved
+  # it is recorded as `failure`, and the release-branch commit and the Actions
+  # list are where it stays visible — the release-PR head itself carries no
+  # check-runs at all (GET /repos/minekube/vialite/commits/0c57342c/check-runs
+  # -> total_count=0), so not even a red job context is reported on a release
+  # branch. The same boundary is visible in the
+  # history: release PRs 0.3.1-0.3.5 (PR #33, #35, #38) touched only the
+  # manifest and the changelog, matched neither this filter nor ci.yml's, and
+  # produced **no** runs — the phantom pair starts exactly with 0.3.6, the first
+  # release PR carrying `go/version.go`.
+  #
+  # Therefore: no check context this workflow reports — neither the workflow
+  # entry `Craftless compatibility` nor the job names `validate Craftless
+  # matrix`, `build PR subprocess linux amd64` and the per-row
+  # `subprocess client <v> -> server <v>` — may be required. Those contexts must
+  # never become required status checks on `main`. A release PR can never
+  # satisfy them: the gated run executes no job and the release branch reports
+  # no check-runs, so a required context would sit expected-and-never-reported,
+  # release-please's auto-merge step (release-please.yml, `gh pr merge`) would
+  # fail, and the release chain would stall on every release instead of merging
+  # itself. This
+  # workflow is the slower of the two by far, so requiring it would also block
+  # the chain for an hour per release. `main` requires nothing today: GET
+  # /repos/minekube/vialite/branches/main/protection -> 404 "Branch not
+  # protected" when read with an installation token that carries
+  # `administration: read` (the same call returns `contexts=['lint-test']` for
+  # minekube/geyserlite, so the read scope is proven), and release-please.yml
+  # mirrors no context at all here — there is no mirror that could satisfy a
+  # required gated check.
+  #
+  # Do not "fix" the red check by editing this filter. Dropping `paths` cannot
+  # remove the approval-gated run, and a filter that stops matching only turns
+  # the red check into a *missing* one — just as unsatisfiable, and the release
+  # PR loses the only (vacuous) check-run it currently shows. The only real fix
+  # is a credential change: release-please opening its PR with a GitHub App/PAT
+  # token, which is a maintainer decision, not a workflow edit.
+  #
+  # go/release_check_contract_test.go pins all of the above. When it fails,
+  # re-decide this note — do not delete the guard.
   pull_request:
     paths:
       - '.github/workflows/craftless.yml'
