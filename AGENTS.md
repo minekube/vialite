@@ -135,6 +135,31 @@ Before merging code changes, verify at least the affected Go tests and linting.
 For native overlay or protocol-routing changes, also run `mise run overlay:apply`
 and check the relevant CI jobs.
 
+### Timing in the subprocess tests
+
+The subprocess tests fork a real helper binary and wait for its loopback
+listener, so their duration is the pod's scheduling latency, not the code's.
+Measured on the 2-CPU Hermes worker (2026-09-27, kanban `t_c9e6b0e3`): one
+`AddBackend` - dynamic port allocation, writing a config, fork/exec of the
+helper and a readiness poll with 10ms granularity - took 79-89ms where the same
+path takes ~11ms on an idle machine, and a `time.Sleep(50ms)` inside the helper
+stretched to 88ms. Both sides of a race stretch, so a window that looks wide
+locally can close there.
+
+Never order a test against a fixed sleep it does not own. Make the helper
+record what it did (`VIALITE_HELPER_BACKEND_PIDS`, `VIALITE_HELPER_FORKED_PIDS`)
+and gate a deliberate runtime exit on a file the test writes
+(`VIALITE_HELPER_EXIT_RELEASE_FILE`), then assert on those markers. A failure
+that appears only on a loaded pod is a window that is too narrow (or a leaked
+child), not a protocol regression: reproduce it with
+`flaky-go-test-reproduction` before calling it a regression.
+
+Poll a condition, do not sample it, when the trigger was an observation the
+runtime made: a forked helper publishes its listener as soon as it is exec'd,
+which can be before the runner's own post-fork bookkeeping resumes (measured:
+sampling `Server.Healthy()` right after a pid marker failed 4/150 loaded runs
+with `started=true ready=true healthy=false`).
+
 ## Documentation
 
 Keep public operator docs on the Gate website under

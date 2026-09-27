@@ -146,6 +146,19 @@ func (r *subprocessRunner) run(ctx context.Context, s *Server) error {
 		if err != nil {
 			r.healthy.Store(false)
 			if ctx.Err() != nil {
+				// The caller stopped us while this runtime was still coming up
+				// (a crash-restart in flight, or a startup that never published
+				// its listener). The runtime must not outlive the runner: a
+				// leaked one keeps holding its loopback bind, so the next Start
+				// fails closed on a listener nobody owns. Join the child this
+				// attempt started - bounded, so a runtime that ignores the
+				// termination signal cannot wedge the runner - and tear the
+				// dynamic backends down with it, like the ready-path shutdown
+				// below does.
+				if !processDone {
+					_ = r.waitProcess(ctx, cmd, done, s.opts.ShutdownTimeout)
+				}
+				r.stopDynamicBackends(context.Background(), s.opts.ShutdownTimeout)
 				return nil
 			}
 			if !processDone {
