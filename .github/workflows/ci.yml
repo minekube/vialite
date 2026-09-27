@@ -9,10 +9,12 @@ on:
       - 'build/**'
       - 'mise.toml'
       - '.github/workflows/**'
-  # Acceptance note — GitHub shows a red `CI` check on *every* release PR, and
-  # it can never go green. It is not a broken job and not this `paths` filter:
-  # it is GitHub's documented approval gate for pull requests that a workflow
-  # created with `GITHUB_TOKEN`.
+  # Acceptance note — every vialite release records a failed `pull_request` run
+  # for this workflow, and craftless.yml records a second one: two red runs per
+  # release, each having executed no job at all, neither of which can go green.
+  # It is not a broken job and not this `paths` filter: it is GitHub's
+  # documented approval gate for pull requests that a workflow created with
+  # `GITHUB_TOKEN`.
   #
   #   "When a pull request is created or updated by a workflow using
   #    `GITHUB_TOKEN`, `pull_request` events with the `opened`, `synchronize`,
@@ -41,7 +43,13 @@ on:
   # and 36204128261. All four are `event=pull_request`,
   # `actor=github-actions[bot]`, `jobs.total_count=0`, `conclusion=failure`, and
   # they are the only `github-actions[bot]` pull_request runs in this
-  # repository's whole action history. The same boundary is visible in the
+  # repository's whole action history. While the release PR is open GitHub
+  # presents such a run as awaiting approval; once the PR is merged unapproved
+  # it is recorded as `failure`, and the release-branch commit and the Actions
+  # list are where it stays visible — the release-PR head itself carries no
+  # check-runs at all (GET /repos/minekube/vialite/commits/0c57342c/check-runs
+  # -> total_count=0), so not even a red job context is reported on a release
+  # branch. The same boundary is visible in the
   # history: release PRs 0.3.1-0.3.5 (PR #33, #35, #38) touched only the
   # manifest and the changelog, matched neither this filter nor craftless.yml's,
   # and produced **no** runs — the phantom pair starts exactly with 0.3.6, the
@@ -50,11 +58,12 @@ on:
   # Therefore: no check context this workflow reports — neither the workflow
   # entry `CI` nor the job names `go-test` / `docs-lint` — may be required.
   # Those contexts must never become required status checks on `main`. A release
-  # PR can never satisfy them: the run is created only to sit unapproved until
-  # the PR merges, at which point GitHub records it as `failure`, so
-  # release-please's auto-merge step (release-please.yml, `gh pr merge`) would
-  # fail and the release chain would stall on every release instead of merging
-  # itself. `main` requires nothing today: GET
+  # PR can never satisfy them: the gated run executes no job and the release
+  # branch reports no check-runs, so a required context would sit
+  # expected-and-never-reported, release-please's auto-merge step
+  # (release-please.yml, `gh pr merge`) would fail, and the release chain would
+  # stall on every release instead of merging itself. `main` requires nothing
+  # today: GET
   # /repos/minekube/vialite/branches/main/protection -> 404 "Branch not
   # protected" when read with an installation token that carries
   # `administration: read` (the same call returns `contexts=['lint-test']` for

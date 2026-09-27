@@ -13,8 +13,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Every release PR shows *.two* red checks — `CI` and `Craftless compatibility`
-// — and neither can ever go green. That is not a broken job and it is not the
+// Every vialite release records *.two* red `pull_request` runs — `CI` and
+// `Craftless compatibility` — each having executed no job at all, and neither
+// can ever go green. That is not a broken job and it is not the
 // `on.pull_request.paths` filter: it is GitHub's documented approval gate for
 // pull requests that a workflow created with `GITHUB_TOKEN`.
 //
@@ -59,10 +60,14 @@ import (
 // the job names (`go-test`, `docs-lint`, `validate Craftless matrix`,
 // `build PR subprocess linux amd64`, the per-row
 // `subprocess client <v> -> server <v>`) — may be added to the required status
-// checks of `main`. No release PR can ever satisfy them: the run is created only
-// to sit in `action_required` until the PR is merged, at which point GitHub
-// records it as `failure`. release-please.yml's auto-merge step would then fail
-// and the release chain would stall on every release. `main` requires nothing
+// checks of `main`. No release PR can ever satisfy them: the gated run executes
+// no job and only sits in `action_required` until the PR is merged, at which
+// point GitHub records it as `failure`, and the release-PR head carries no
+// check-runs at all (measured: `/commits/0c57342c/check-runs` -> 0 for the 0.3.7
+// release PR head). A required context therefore sits
+// expected-and-never-reported. release-please.yml's auto-merge step would then
+// fail and the release chain would stall on every release. `main` requires
+// nothing
 // today (GET /repos/minekube/vialite/branches/main/protection -> 404 "Branch not
 // protected", read with an installation token holding `administration: read`;
 // the same call returns `contexts=['lint-test']` for minekube/geyserlite), and
