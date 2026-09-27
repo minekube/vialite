@@ -50,6 +50,18 @@ protocol behaviour.
 - `vialite-native/.../VialiteBridge.java`: installs the vialite packet registry for
   the per-backend listeners it creates (`VialiteClient2ProxyChannelInitializer`
   instead of `Client2ProxyChannelInitializer`).
+- `vialite-native/.../VialitePreConnectGuard.java` (plus `VialiteBridge`'s stage
+  marking/`describeRoute` and the arming line in
+  `VialiteClient2ProxyChannelInitializer`): bounds and names the window between
+  accepting Gate's bridge connection and dialling the backend. Without it an
+  accepted connection whose handshake never reaches `Client2ProxyHandler` (a
+  pipeline/event-loop stall, a flow-control hold) logged nothing, dialled no
+  backend and left Gate's join parked on a read that a Gate without `gate#1197`
+  never times out — the 2026-09-27 Foxof7207 case. The guard runs on its own
+  daemon thread, reports the backend, configured address, resolved address and
+  the stage reached, and closes the connection so the join fails instead of
+  hanging. It adds no translation behaviour and does not change any ViaProxy
+  deadline.
 
 When bumping `build/via.version`, re-derive these files from the new upstream
 revision and re-apply only the deltas above — do not keep stale copies, since

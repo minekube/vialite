@@ -21,13 +21,16 @@ import java.util.function.Supplier;
 import net.raphimc.netminecraft.netty.connection.NetServer;
 import net.raphimc.viaproxy.ViaProxy;
 import net.raphimc.viaproxy.plugins.events.PreConnectEvent;
+import net.raphimc.viaproxy.plugins.events.ConnectEvent;
 import net.raphimc.viaproxy.protocoltranslator.ProtocolTranslator;
 import net.raphimc.viaproxy.protocoltranslator.viaproxy.ViaProxyConfig;
 import net.raphimc.viaproxy.proxy.client2proxy.Client2ProxyHandler;
+import net.raphimc.viaproxy.proxy.session.ProxyConnection;
 import net.raphimc.viaproxy.saves.SaveManager;
 import net.raphimc.viaproxy.util.AddressUtil;
 import net.raphimc.viaproxy.util.ProtocolVersionUtil;
 import net.raphimc.viaproxy.util.logging.Logger;
+import org.apache.logging.log4j.Level;
 import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.nativeimage.c.function.CEntryPoint;
 import org.graalvm.nativeimage.c.type.CCharPointer;
@@ -43,6 +46,7 @@ public final class VialiteBridge {
     private static final Map<String, NetServer> SERVERS_BY_BACKEND = new ConcurrentHashMap<>();
     private static final RouteEventHandler ROUTE_EVENT_HANDLER = new RouteEventHandler();
     private static final Consumer<PreConnectEvent> ROUTE_EVENT_CONSUMER = ROUTE_EVENT_HANDLER::onPreConnect;
+    private static final Consumer<ConnectEvent> CONNECT_EVENT_CONSUMER = ROUTE_EVENT_HANDLER::onConnect;
     private static NativeConfig activeConfig;
     private static ForwardingMode activeForwardingMode = ForwardingMode.NONE;
 
@@ -76,8 +80,10 @@ public final class VialiteBridge {
 
             shutdownServers();
             initializeViaProxy(nativeConfig);
+            VialitePreConnectGuard.configure(nativeConfig.handshakeDeadlineMs, nativeConfig.dialDeadlineMs);
 
             ViaProxy.EVENT_MANAGER.unregisterConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
+            ViaProxy.EVENT_MANAGER.unregisterConsumer(CONNECT_EVENT_CONSUMER, ConnectEvent.class);
             ROUTES_BY_LOCAL_PORT.clear();
             BACKEND_ADDRESSES.clear();
 
@@ -86,6 +92,7 @@ public final class VialiteBridge {
                     if (addBackend(nativeConfig, backend) == null) {
                         shutdownServers();
                         ViaProxy.EVENT_MANAGER.unregisterConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
+                        ViaProxy.EVENT_MANAGER.unregisterConsumer(CONNECT_EVENT_CONSUMER, ConnectEvent.class);
                         return 4;
                     }
                 }
@@ -93,6 +100,7 @@ public final class VialiteBridge {
 
             activeConfig = nativeConfig;
             ViaProxy.EVENT_MANAGER.registerConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
+            ViaProxy.EVENT_MANAGER.registerConsumer(CONNECT_EVENT_CONSUMER, ConnectEvent.class);
             INITIALIZED.set(true);
             return 0;
         } catch (Throwable t) {
@@ -380,21 +388,75 @@ public final class VialiteBridge {
             }
             event.setServerAddress(route.targetAddress);
             event.setServerVersion(route.targetVersion);
+            // The handshake reached the translation handler: the guard can stop
+            // watching the accept stage, and the console gets the one line that
+            // names the backend and the address the hop is about to dial.
+            VialitePreConnectGuard.markStage(event.getClientChannel(), VialitePreConnectGuard.STAGE_HANDSHAKE);
+            Logger.u_log(Level.INFO, "vialite",
+                    event.getClientChannel().remoteAddress(), null,
+                    "handshake handled for " + route.describe()
+                            + "; stage=handshake (next: protocol detection and backend dial)");
         }
+
+        public void onConnect(ConnectEvent event) {
+            // Fired by ViaProxy immediately before it dials the backend, so the
+            // join is out of the pre-connect window for good.
+            final ProxyConnection connection = event.getProxyConnection();
+            if (connection == null) {
+                return;
+            }
+            VialitePreConnectGuard.markStage(connection.getC2P(), VialitePreConnectGuard.STAGE_DIAL);
+        }
+    }
+
+    /**
+     * Describes the backend behind a listener port, for diagnostics: which
+     * backend, the configured address Gate passed in, and the address Java
+     * actually resolved it to.
+     */
+    static String describeRoute(final int port) {
+        final BackendRoute route = ROUTES_BY_LOCAL_PORT.get(port);
+        if (route == null) {
+            return "an unknown backend (no listener registered for loopback port " + port + ")";
+        }
+        return route.describe() + ", listener port " + port;
     }
 
     private static final class BackendRoute {
         private final SocketAddress targetAddress;
         private final ProtocolVersion targetVersion;
+        private final String name;
+        private final String configured;
 
-        private BackendRoute(SocketAddress targetAddress, ProtocolVersion targetVersion) {
+        private BackendRoute(SocketAddress targetAddress, ProtocolVersion targetVersion, String name, String configured) {
             this.targetAddress = targetAddress;
             this.targetVersion = targetVersion;
+            this.name = name;
+            this.configured = configured;
         }
 
         private static BackendRoute from(NativeBackend backend) {
             ProtocolVersion version = protocolVersion(backend.version, backend.detect);
-            return new BackendRoute(AddressUtil.parse(backend.address, version), version);
+            return new BackendRoute(AddressUtil.parse(backend.address, version), version,
+                    backend.name, backend.address);
+        }
+
+        /** "backend \"lobby\" (configured localhost:25000, resolved 127.0.0.1:25000)". */
+        private String describe() {
+            return "backend \"" + this.name + "\" (configured " + this.configured
+                    + ", resolved " + this.describeResolved() + ")";
+        }
+
+        private String describeResolved() {
+            if (this.targetAddress instanceof InetSocketAddress inet) {
+                if (inet.isUnresolved() || inet.getAddress() == null) {
+                    return "unresolved host " + inet.getHostString();
+                }
+                final String host = inet.getAddress().getHostAddress();
+                // Bracket IPv6 literals so "address:port" stays unambiguous.
+                return (host.indexOf(':') >= 0 ? "[" + host + "]" : host) + ":" + inet.getPort();
+            }
+            return AddressUtil.toString(this.targetAddress);
         }
 
         private static ProtocolVersion protocolVersion(String configured, boolean detect) {
@@ -414,6 +476,15 @@ public final class VialiteBridge {
         @SerializedName("gate_protocol")
         private String gateProtocol;
         private List<NativeBackend> backends;
+        /**
+         * Optional pre-connect guard deadlines in milliseconds. Absent keeps the
+         * defaults (10000 ms to the handshake, 25000 ms to the backend dial);
+         * 0 disables the stage.
+         */
+        @SerializedName("handshake_deadline_ms")
+        private Long handshakeDeadlineMs;
+        @SerializedName("dial_deadline_ms")
+        private Long dialDeadlineMs;
 
         private static NativeConfig fromArgs(String[] args) throws Exception {
             if (args == null || args.length != 2 || !"--config".equals(args[0])) {

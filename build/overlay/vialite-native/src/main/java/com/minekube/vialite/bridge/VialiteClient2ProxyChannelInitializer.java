@@ -23,6 +23,10 @@ public final class VialiteClient2ProxyChannelInitializer extends Client2ProxyCha
 
     @Override
     protected void initChannel(final Channel channel) {
+        // Arm the pre-connect guard before the upstream pipeline is installed:
+        // an accepted connection that never reaches the handshake handler (or
+        // that reaches it and never dials a backend) must not stay silent.
+        VialitePreConnectGuard.arm(channel);
         super.initChannel(channel);
         channel.attr(MCPipeline.PACKET_REGISTRY_ATTRIBUTE_KEY).set(new VialitePacketRegistry(false, -1));
     }
