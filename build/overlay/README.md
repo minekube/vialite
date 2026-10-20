@@ -31,6 +31,16 @@ protocol behaviour.
 - `.../saves/SaveManager.java`, `.../saves/impl/AccountsSave.java`: save
   loading avoids reflection streams (`RStream`), tolerates missing plugin
   managers and absent save files, and keeps the field list explicit.
+- `.../proxy/util/ChannelUtil.java`: auto-read save/restore transitions are moved onto the
+  channel's own event loop. Upstream mutates a plain `Stack<Boolean>` channel attribute from
+  two different loops (`CompressionPacketHandler`'s restore runs in a listener on the client
+  channel's loop, while `LoginPacketHandler`/`ConfigurationPacketHandler` push and pop on the
+  backend channel's loop), so two restores can interleave, both pop, and the loser's
+  `setAutoRead(false)` wins -- leaving the backend channel unreadable forever with no
+  exception (the ~0.2% silent CONFIGURATION stall: backend socket rx queue grows, nothing
+  reaches the client, no `Configuration finished`). Semantics are unchanged: same pushed
+  values, same order as a single-threaded sequence would produce. Repro/proof:
+  `build/autoread-race/run.sh`.
 - `src/main/resources/log4j2.xml`: console-only, uncoloured pattern without the
   `ip_redactor` lookup and without the rolling file appenders, so Gate can parse
   the subprocess output line by line and the native image writes no log files.

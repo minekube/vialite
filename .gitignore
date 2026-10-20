@@ -4,4 +4,5 @@ build/.work/
 go/bin/
 go/assets/vialite-*
 go/assets/libvialite-*
+build/autoread-race/lib/
 *.tmp
