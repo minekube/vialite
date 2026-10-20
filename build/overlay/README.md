@@ -62,6 +62,20 @@ protocol behaviour.
   the stage reached, and closes the connection so the join fails instead of
   hanging. It adds no translation behaviour and does not change any ViaProxy
   deadline.
+  The same guard also owns the CONFIGURATION stage, the hop's second silent
+  class: a join that logs `Connected successfully! Switching to CONFIGURATION
+  state` and then writes nothing toward the client (backend socket still being
+  read, client socket empty, no kick). `LoginSuccessWatch` arms the stage when
+  the runtime writes LoginSuccess toward Gate's bridge connection (1.20.2+
+  clients only — older clients have no CONFIGURATION state), a socket-level
+  counter records clientbound and serverbound bytes, and after
+  `configuration_deadline_ms` (default 15000 ms, below Gate's 30000 ms default
+  read timeout) with zero clientbound bytes — or an unwritable channel — the
+  connection is closed with one named diagnosis: player, backend with configured
+  and resolved address, stage, bytes in both directions and elapsed time. A
+  healthy join is never touched: the configuration burst (plugin.Message plus
+  ~40 kB of registry data) arrives within milliseconds of LoginSuccess.
+  `build/configstage-watch/run.sh` proves the branches on real Netty.
 
 When bumping `build/via.version`, re-derive these files from the new upstream
 revision and re-apply only the deltas above — do not keep stale copies, since
