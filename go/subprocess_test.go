@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -1183,5 +1184,373 @@ func TestSubprocessNotReadyErrorNamesTheBind(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Error("Start did not return")
+	}
+}
+
+// TestSubprocessRunnerRefusesSecondDynamicBackendOnReservedAddress is the
+// regression guard for the shape measured on 2026-10-20 (kanban t_40da126d,
+// moxy-bedrock-e2e silent-stall arm).
+//
+// A dynamic backend only knows its loopback port after
+// dynamicLoopbackBackendAddress has reserved it, and that reservation is a
+// listen(:0) that is closed again before the runtime binds it. Two joins in one
+// burst can therefore be handed the SAME port: the first runtime binds it, the
+// second dies with "bind(..) failed with error(-98): Address already in use",
+// and readiness - decided by dialing the address - is satisfied by the first
+// runtime. Gate then dials the second backend's published address, the first
+// runtime serves it (its route belongs to another session), and the join stalls
+// silently in config state while both player connections wait for packets that
+// the served session cannot produce.
+//
+// An address already handed to a live dynamic backend must never be published a
+// second time: fail closed and name the address and the backend.
+func TestSubprocessRunnerRefusesSecondDynamicBackendOnReservedAddress(t *testing.T) {
+	// A runtime that delays its bind keeps the address unbound long enough for a
+	// second dynamic add in the same burst to be handed the same port.
+	t.Setenv("VIALITE_HELPER_READY_DELAY_MS", "400")
+
+	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve shared address: %v", err)
+	}
+	sharedAddr := reserved.Addr().String()
+	_ = reserved.Close()
+
+	original := allocateDynamicBackendAddress
+	allocateDynamicBackendAddress = func(string) (string, error) { return sharedAddr, nil }
+	t.Cleanup(func() { allocateDynamicBackendAddress = original })
+
+	bin := buildSubprocessHelper(t)
+	opts, err := Options{
+		Mode:       ModeSubprocess,
+		BinaryPath: bin,
+		Backends:   []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelReady()
+	if err := srv.WaitReady(readyCtx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	defer func() { _ = srv.Stop(context.Background()) }()
+
+	first, err := srv.AddBackend(ctx, Backend{Name: "dyn-1", Address: "127.0.0.1:25566"})
+	if err != nil {
+		t.Fatalf("AddBackend(dyn-1): %v", err)
+	}
+	if first != sharedAddr {
+		t.Fatalf("AddBackend(dyn-1) = %q, want the reserved address %q", first, sharedAddr)
+	}
+
+	second, err := srv.AddBackend(ctx, Backend{Name: "dyn-2", Address: "127.0.0.1:25567"})
+	if err == nil {
+		t.Fatalf("AddBackend(dyn-2) published %q although %s already belongs to dyn-1: a runtime that "+
+			"cannot own its listener must not be published - joins routed there stall silently in "+
+			"config state", second, sharedAddr)
+	}
+	if !strings.Contains(err.Error(), sharedAddr) {
+		t.Errorf("error %q does not name the address %s", err, sharedAddr)
+	}
+	if !strings.Contains(err.Error(), "dyn-2") {
+		t.Errorf("error %q does not name the backend dyn-2", err)
+	}
+}
+
+// TestDynamicBackendAddressAvoidsEphemeralPortRange pins the collision fix for
+// the 2026-10-20 stall arm (kanban t_40da126d): a dynamic backend's port is
+// reserved with listen(:0) and closed again before the runtime binds it, so a
+// port inside the kernel's ephemeral range can be taken by any socket the same
+// process allocates in that window - Gate's per-join bridge listener is one -
+// and the runtime then dies with "Address already in use" while the supervisor
+// publishes the address anyway. Allocating outside the ephemeral range removes
+// the window.
+func TestDynamicBackendAddressAvoidsEphemeralPortRange(t *testing.T) {
+	seen := make(map[string]bool)
+	for i := 0; i < 32; i++ {
+		addr, err := dynamicLoopbackBackendAddress("127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("dynamicLoopbackBackendAddress: %v", err)
+		}
+		_, portStr, err := net.SplitHostPort(addr)
+		if err != nil {
+			t.Fatalf("split %q: %v", addr, err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			t.Fatalf("port %q: %v", portStr, err)
+		}
+		if port < dynamicBackendPortRangeStart || port > dynamicBackendPortRangeEnd {
+			t.Fatalf("dynamic backend address %s is outside the reserved range %d-%d: "+
+				"a port in the ephemeral range can be taken by another socket before the runtime binds it",
+				addr, dynamicBackendPortRangeStart, dynamicBackendPortRangeEnd)
+		}
+		// Repeats are legitimate: each probe closes its listener before it
+		// returns, so the address is free again. What must not happen is a
+		// port from the ephemeral range (the assertion above), and a second
+		// concurrent reservation of a live port is covered by
+		// TestSubprocessRunnerRefusesSecondDynamicBackendOnReservedAddress.
+		seen[addr] = true
+	}
+	if len(seen) == 0 {
+		t.Fatal("no dynamic backend address was allocated")
+	}
+}
+
+// TestSubprocessDynamicBackendRejectsForeignListener is the regression guard for
+// the silent-stall shape: readiness is decided by dialling the address, which a
+// foreign listener satisfies. Here the runtime never binds anything and the
+// test holds the address, so a published backend would route Gate's joins into
+// the test's socket - measured as a config-state stall with no error anywhere.
+// The add must fail closed and name the address and the backend.
+func TestSubprocessDynamicBackendRejectsForeignListener(t *testing.T) {
+	// The runtime is alive but has not bound its listener yet (the 800 ms delay
+	// covers the whole readiness decision), so only the dial-based verdict can
+	// see a listener there - and that listener is the test's.
+	t.Setenv("VIALITE_HELPER_READY_DELAY_MS", "800")
+
+	foreign, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("hold foreign listener: %v", err)
+	}
+	defer foreign.Close()
+	go func() {
+		for {
+			conn, err := foreign.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	foreignAddr := foreign.Addr().String()
+
+	original := allocateDynamicBackendAddress
+	allocateDynamicBackendAddress = func(string) (string, error) { return foreignAddr, nil }
+	t.Cleanup(func() { allocateDynamicBackendAddress = original })
+
+	bin := buildSubprocessHelper(t)
+	opts, err := Options{
+		Mode:       ModeSubprocess,
+		BinaryPath: bin,
+		Backends:   []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelReady()
+	if err := srv.WaitReady(readyCtx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	defer func() { _ = srv.Stop(context.Background()) }()
+
+	addr, err := srv.AddBackend(ctx, Backend{Name: "dyn-foreign", Address: "127.0.0.1:25567"})
+	if err == nil {
+		t.Fatalf("AddBackend published %q for dyn-foreign although the listener there belongs to another "+
+			"process: joins routed there reach a foreign session and stall silently", addr)
+	}
+	if !errors.Is(err, ErrAddressNotOwned) {
+		t.Errorf("error = %v, want ErrAddressNotOwned", err)
+	}
+	if !strings.Contains(err.Error(), foreignAddr) {
+		t.Errorf("error %q does not name the address %s", err, foreignAddr)
+	}
+	if !strings.Contains(err.Error(), "dyn-foreign") {
+		t.Errorf("error %q does not name the backend dyn-foreign", err)
+	}
+}
+
+// TestDynamicBackendAddressFailsClosedWhenTheRangeIsFull pins the rule that an
+// exhausted reserved range is an error, never a fallback to a kernel-chosen
+// ephemeral port: the fallback re-opens the collision window the reserved range
+// exists to close (kanban t_40da126d).
+func TestDynamicBackendAddressFailsClosedWhenTheRangeIsFull(t *testing.T) {
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer held.Close()
+	_, portStr, err := net.SplitHostPort(held.Addr().String())
+	if err != nil {
+		t.Fatalf("split %q: %v", held.Addr(), err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("port %q: %v", portStr, err)
+	}
+
+	start, end := dynamicBackendPortRangeStart, dynamicBackendPortRangeEnd
+	dynamicBackendPortRangeStart, dynamicBackendPortRangeEnd = port, port
+	t.Cleanup(func() { dynamicBackendPortRangeStart, dynamicBackendPortRangeEnd = start, end })
+
+	addr, err := reserveLoopbackAddress("127.0.0.1")
+	if err == nil {
+		t.Fatalf("reserveLoopbackAddress returned %q while the reserved range %d-%d was full: a "+
+			"kernel-chosen fallback port can be taken by another listener before the runtime binds "+
+			"it, which is the collision this range exists to remove", addr, port, port)
+	}
+	if !errors.Is(err, ErrDynamicAddressExhausted) {
+		t.Fatalf("reserveLoopbackAddress error = %v, want ErrDynamicAddressExhausted", err)
+	}
+}
+
+// TestSubprocessDynamicBackendUsesEmbedderAllocator is the adoption guard for the
+// one-allocator rule: an embedder that owns the process's loopback allocator (Gate
+// passes pkg/util/loopback's Reserve) must have its address used for the child, and
+// must get the address back when the backend goes away.
+func TestSubprocessDynamicBackendUsesEmbedderAllocator(t *testing.T) {
+	bin := buildSubprocessHelper(t)
+
+	var (
+		mu       sync.Mutex
+		hosts    []string
+		reserved []string
+		released []string
+	)
+	reserve := func(host string) (string, func(), error) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return "", nil, err
+		}
+		addr := ln.Addr().String()
+		_ = ln.Close()
+		mu.Lock()
+		hosts = append(hosts, host)
+		reserved = append(reserved, addr)
+		mu.Unlock()
+		return addr, func() {
+			mu.Lock()
+			released = append(released, addr)
+			mu.Unlock()
+		}, nil
+	}
+
+	opts, err := Options{
+		Mode:                   ModeSubprocess,
+		BinaryPath:             bin,
+		AllowDynamicBackends:   true,
+		Backends:               []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
+		ReserveLoopbackAddress: reserve,
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelReady()
+	if err := srv.WaitReady(readyCtx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	defer func() { _ = srv.Stop(context.Background()) }()
+
+	addr, err := srv.AddBackend(ctx, Backend{Name: "dyn-1", Address: "127.0.0.1:25566"})
+	if err != nil {
+		t.Fatalf("AddBackend(dyn-1): %v", err)
+	}
+	mu.Lock()
+	if len(reserved) != 1 {
+		mu.Unlock()
+		t.Fatalf("embedder allocator was called %d times, want exactly 1", len(reserved))
+	}
+	want := reserved[0]
+	if hosts[0] != "127.0.0.1" {
+		mu.Unlock()
+		t.Fatalf("embedder allocator host = %q, want 127.0.0.1", hosts[0])
+	}
+	mu.Unlock()
+	if addr != want {
+		t.Fatalf("AddBackend published %q, but the embedder allocator reserved %q: the child was not "+
+			"told to bind the address the allocator owns", addr, want)
+	}
+
+	if err := srv.RemoveBackend(ctx, "dyn-1"); err != nil {
+		t.Fatalf("RemoveBackend(dyn-1): %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(released) != 1 || released[0] != want {
+		t.Fatalf("embedder allocator releases = %v, want exactly [%s] once the backend is gone", released, want)
+	}
+}
+
+// TestSubprocessDynamicBackendReleasesEmbedderReservationOnFailure pins the other
+// half of the hook contract: a backend that never becomes ready must give its
+// reserved address back exactly once, so a failing join cannot leak ports out of
+// the embedder's range.
+func TestSubprocessDynamicBackendReleasesEmbedderReservationOnFailure(t *testing.T) {
+	bin := buildSubprocessHelper(t)
+
+	// Held by this test, so the child cannot bind it and never becomes ready.
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer held.Close()
+
+	var (
+		mu       sync.Mutex
+		releases int
+	)
+	reserve := func(string) (string, func(), error) {
+		return held.Addr().String(), func() {
+			mu.Lock()
+			releases++
+			mu.Unlock()
+		}, nil
+	}
+
+	opts, err := Options{
+		Mode:                   ModeSubprocess,
+		BinaryPath:             bin,
+		AllowDynamicBackends:   true,
+		Backends:               []Backend{{Name: "lobby", Address: "127.0.0.1:25566"}},
+		ShutdownTimeout:        2 * time.Second,
+		ReserveLoopbackAddress: reserve,
+	}.validate()
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	srv := &Server{opts: opts, runner: &subprocessRunner{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Start(ctx) }()
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelReady()
+	if err := srv.WaitReady(readyCtx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	addCtx, cancelAdd := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelAdd()
+	if addr, err := srv.AddBackend(addCtx, Backend{Name: "dyn-1", Address: "127.0.0.1:25566"}); err == nil {
+		t.Fatalf("AddBackend(dyn-1) published %q although the address was held by another listener", addr)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if releases != 1 {
+		t.Fatalf("embedder allocator releases = %d, want exactly 1 after a failed add", releases)
 	}
 }
