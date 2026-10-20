@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.9](https://github.com/minekube/vialite/compare/v0.3.8...v0.3.9) (2026-10-20)
+
+
+### Bug Fixes
+
+* **subprocess:** reserve dynamic backend ports outside the ephemeral range ([#54](https://github.com/minekube/vialite/issues/54)) ([006b0ba](https://github.com/minekube/vialite/commit/006b0ba539e518869b6446fe3e35a1a54a4b1f8c))
+
 ## [0.3.8](https://github.com/minekube/vialite/compare/v0.3.7...v0.3.8) (2026-09-27)
 
 
