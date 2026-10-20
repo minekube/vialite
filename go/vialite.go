@@ -49,6 +49,17 @@ type Options struct {
 	// register translated backends at runtime.
 	AllowDynamicBackends bool
 	Backends             []Backend
+
+	// ReserveLoopbackAddress lets the embedding process reserve the loopback
+	// address a dynamic subprocess backend is told to bind, so every dynamically
+	// allocated listener in that process comes from one allocator. Returning a
+	// nil release function is allowed and means "nothing to release".
+	//
+	// The address must be exclusively this backend's until the release function is
+	// called; the package calls it exactly once, when the runtime no longer uses
+	// the address. When nil, the package allocates from its own non-ephemeral
+	// range (20000-29999) and never from the kernel's ephemeral range.
+	ReserveLoopbackAddress func(host string) (addr string, release func(), err error)
 }
 
 // Backend describes a translated backend server.

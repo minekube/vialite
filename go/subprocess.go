@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +20,16 @@ import (
 // published the backend listener Gate dials. It is distinct from a readiness
 // timeout so callers can tell "the runtime is gone" from "the runtime is slow".
 var errSubprocessExitedBeforeReady = errors.New("vialite: subprocess exited before backend listener became ready")
+
+// ErrDynamicAddressExhausted reports that a dynamic backend could not be given a
+// loopback address that no other backend owns. Publishing the colliding address
+// anyway would point Gate at another session's runtime.
+var ErrDynamicAddressExhausted = errors.New("vialite: no unreserved loopback address for dynamic backend")
+
+// ErrAddressNotOwned reports that a dynamic backend's listener is held by
+// another process: publishing that address would route its joins through a
+// foreign session instead of failing the join.
+var ErrAddressNotOwned = errors.New("vialite: dynamic backend address is not owned by its runtime")
 
 // describeBackendBinds renders the backend loopback addresses the runtime was
 // supposed to publish, so a readiness failure names which listener is missing
@@ -52,6 +64,10 @@ type subprocessRunner struct {
 	dynamic map[string]*subprocessBackendProcess
 	adding  map[string]struct{}
 	pending map[string]*subprocessBackendProcess
+	// reserving maps a loopback address a dynamic backend is being given
+	// (before its runtime binds it) to the backend key that owns it, so one
+	// address is never promised to two runtimes in the same burst.
+	reserving map[string]string
 }
 
 type subprocessBackendProcess struct {
@@ -62,6 +78,20 @@ type subprocessBackendProcess struct {
 	done       chan struct{}
 	waitMu     sync.Mutex
 	waitErr    error
+	// releaseAddr returns the backend's reserved loopback address to the
+	// allocator that handed it out (Options.ReserveLoopbackAddress). It is nil
+	// when this package allocated the address itself, and is called exactly once,
+	// when the runtime no longer uses the address.
+	releaseAddr func()
+}
+
+// releaseAddress returns the backend's reserved address to its allocator. Safe to
+// call more than once and on a nil process.
+func (p *subprocessBackendProcess) releaseAddress() {
+	if p == nil || p.releaseAddr == nil {
+		return
+	}
+	p.releaseAddr()
 }
 
 func (p *subprocessBackendProcess) setWaitErr(err error) {
@@ -384,20 +414,34 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 		r.mu.Unlock()
 	}
 
-	addr, err := dynamicLoopbackBackendAddress(opts.Bind)
+	r.mu.Lock()
+	addr, releaseAddr, err := r.reserveDynamicAddressLocked(key, opts.Bind)
+	r.mu.Unlock()
 	if err != nil {
 		cleanupAdding()
 		return "", fmt.Errorf("vialite: allocate subprocess backend %s: %w", backend.Name, err)
+	}
+	releaseReservation := func() {
+		r.mu.Lock()
+		if r.reserving[addr] == key {
+			delete(r.reserving, addr)
+		}
+		r.mu.Unlock()
+		if releaseAddr != nil {
+			releaseAddr()
+		}
 	}
 	binds := map[string]string{backend.Name: addr, key: addr}
 	opts.Backends = []Backend{backend}
 	config, err := opts.nativeConfigJSONWithBackendBinds(binds)
 	if err != nil {
+		releaseReservation()
 		cleanupAdding()
 		return "", err
 	}
 	configPath, err := writeTempConfig(config)
 	if err != nil {
+		releaseReservation()
 		cleanupAdding()
 		return "", err
 	}
@@ -411,18 +455,21 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 	if !r.healthy.Load() || r.bin == "" {
 		delete(r.adding, key)
 		r.mu.Unlock()
+		releaseReservation()
 		_ = os.Remove(configPath)
 		return "", ErrNotStarted
 	}
 	if err := cmd.Start(); err != nil {
 		delete(r.adding, key)
 		r.mu.Unlock()
+		releaseReservation()
 		cleanupAdding()
 		_ = os.Remove(configPath)
 		return "", err
 	}
 	go func() { done <- cmd.Wait() }()
 	proc := newSubprocessBackendProcess(backend.Name, addr, configPath, cmd, done)
+	proc.releaseAddr = releaseAddr
 	delete(r.adding, key)
 	r.pending[key] = proc
 	r.mu.Unlock()
@@ -436,9 +483,23 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 		stopped := !r.healthy.Load() || r.bin == ""
 		r.mu.Unlock()
 		if stopped {
+			releaseReservation()
 			return "", ErrNotStarted
 		}
+		releaseReservation()
 		return "", err
+	}
+
+	if !dynamicAddressOwned(proc, addr) {
+		_ = stopSubprocessBackend(context.Background(), proc, opts.ShutdownTimeout)
+		r.mu.Lock()
+		if r.pending[key] == proc {
+			delete(r.pending, key)
+		}
+		r.mu.Unlock()
+		releaseReservation()
+		return "", fmt.Errorf("%w: backend %s could not own %s; its listener belongs to another process, "+
+			"so joins routed there would reach a foreign session", ErrAddressNotOwned, backend.Name, addr)
 	}
 
 	r.mu.Lock()
@@ -448,14 +509,19 @@ func (r *subprocessRunner) addBackend(ctx context.Context, backend Backend) (str
 		}
 		r.mu.Unlock()
 		_ = stopSubprocessBackend(context.Background(), proc, opts.ShutdownTimeout)
+		releaseReservation()
 		return "", ErrNotStarted
 	}
 	if r.pending[key] != proc {
 		r.mu.Unlock()
 		_ = stopSubprocessBackend(context.Background(), proc, opts.ShutdownTimeout)
+		releaseReservation()
 		return "", ErrNotStarted
 	}
 	delete(r.pending, key)
+	if r.reserving[addr] == key {
+		delete(r.reserving, addr)
+	}
 	if r.dynamic == nil {
 		r.dynamic = make(map[string]*subprocessBackendProcess)
 	}
@@ -507,6 +573,9 @@ func (r *subprocessRunner) stopDynamicBackends(ctx context.Context, timeout time
 	for key := range r.adding {
 		delete(r.adding, key)
 	}
+	for addr := range r.reserving {
+		delete(r.reserving, addr)
+	}
 	r.mu.Unlock()
 	for _, proc := range processes {
 		_ = stopSubprocessBackend(ctx, proc, timeout)
@@ -544,7 +613,10 @@ func newSubprocessBackendProcess(name, addr, configPath string, cmd *exec.Cmd, w
 }
 
 func stopSubprocessBackend(ctx context.Context, proc *subprocessBackendProcess, shutdownTimeout time.Duration) error {
-	defer func() { _ = os.Remove(proc.configPath) }()
+	defer func() {
+		_ = os.Remove(proc.configPath)
+		proc.releaseAddress()
+	}()
 	select {
 	case <-proc.done:
 		err := proc.err()
@@ -679,6 +751,102 @@ func loopbackBackendAddress(bind string, index int) (string, error) {
 	return concreteLoopbackBind(bind)
 }
 
+// addressOwnerLocked reports the backend a loopback address is already promised
+// to: a published backend (static or dynamic), a pending dynamic runtime, or an
+// in-flight add. A subprocess runtime cannot own a port another runtime holds,
+// and publishing such an address sends Gate's joins through the other runtime's
+// route (measured 2026-10-20: silent config-state stall, kanban t_40da126d).
+func (r *subprocessRunner) addressOwnerLocked(addr string) (string, bool) {
+	for name, published := range r.backends {
+		if published == addr {
+			return name, true
+		}
+	}
+	for key, proc := range r.pending {
+		if proc != nil && proc.addr == addr {
+			return key, true
+		}
+	}
+	if owner, ok := r.reserving[addr]; ok {
+		return owner, true
+	}
+	return "", false
+}
+
+// reserveDynamicAddressLocked allocates and reserves a loopback address for a
+// dynamic backend that no other backend has been promised. The allocation is a
+// listen(:0) whose listener is closed again before the child binds it, so a
+// burst can hand the same port to two children; reserving inside this runner
+// keeps one address with one runtime instead of publishing an address whose
+// listener belongs to another session.
+func (r *subprocessRunner) reserveDynamicAddressLocked(key, bind string) (string, func(), error) {
+	const attempts = 8
+	lastAddr := ""
+	lastOwner := ""
+	for attempt := 0; attempt < attempts; attempt++ {
+		addr, release, err := r.allocateBackendAddressLocked(bind)
+		if err != nil {
+			return "", nil, err
+		}
+		lastAddr = addr
+		if owner, taken := r.addressOwnerLocked(addr); taken && owner != key {
+			lastOwner = owner
+			if release != nil {
+				release()
+			}
+			continue
+		}
+		if r.reserving == nil {
+			r.reserving = make(map[string]string)
+		}
+		r.reserving[addr] = key
+		return addr, release, nil
+	}
+	return "", nil, fmt.Errorf("%w: %s is already reserved by %s", ErrDynamicAddressExhausted, lastAddr, lastOwner)
+}
+
+// allocateBackendAddressLocked reserves the loopback address a dynamic backend is
+// told to bind. An embedder that owns one loopback allocator for the whole
+// process injects it with Options.ReserveLoopbackAddress, so this package's
+// reservations and that process's other dynamic listeners cannot name the same
+// port. Without a hook the package allocates from its own reserved range.
+//
+// The returned release function (nil when this package owns the address) is
+// called exactly once, when the runtime no longer uses the address.
+func (r *subprocessRunner) allocateBackendAddressLocked(bind string) (string, func(), error) {
+	if reserve := r.opts.ReserveLoopbackAddress; reserve != nil {
+		if bind == "" {
+			bind = "127.0.0.1:0"
+		}
+		host, _, err := net.SplitHostPort(bind)
+		if err != nil {
+			return "", nil, err
+		}
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		// The embedder owns every dynamic loopback address, including when
+		// Options.Bind pins the runtime's static port: that port is the static
+		// listener's, not a dynamic backend's.
+		addr, release, err := reserve(host)
+		if err != nil {
+			return "", nil, err
+		}
+		if release == nil {
+			release = func() {}
+		}
+		var once sync.Once
+		return addr, func() { once.Do(release) }, nil
+	}
+	addr, err := allocateDynamicBackendAddress(bind)
+	return addr, nil, err
+}
+
+// allocateDynamicBackendAddress reserves the loopback address that a dynamic
+// subprocess backend is told to bind. It is a variable so tests can pin the
+// address a racing allocation returns.
+var allocateDynamicBackendAddress = dynamicLoopbackBackendAddress
+
 func dynamicLoopbackBackendAddress(bind string) (string, error) {
 	if bind == "" {
 		bind = "127.0.0.1:0"
@@ -690,7 +858,59 @@ func dynamicLoopbackBackendAddress(bind string) (string, error) {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	return concreteLoopbackBind(net.JoinHostPort(host, "0"))
+	// Only the host carries over from Options.Bind: its port belongs to the
+	// runtime's own static listener, and a dynamic backend that reused it would
+	// collide with that listener (the pre-existing "dynamic backend must not
+	// reuse the fixed bind" contract).
+	return reserveLoopbackAddress(host)
+}
+
+// dynamicBackendPortRange keeps dynamic backend listeners out of the kernel's
+// ephemeral range (linux default 32768-60999). Every allocation here is a
+// listen(:0) whose socket is closed again before the runtime binds it, so any
+// socket the same process allocates from the ephemeral range in that window can
+// take the port: Gate's per-join bridge listener does exactly that, the child
+// then fails to bind, and its joins are routed through the wrong tunnel
+// (measured 2026-10-20, kanban t_40da126d).
+var (
+	dynamicBackendPortRangeStart = 20000
+	dynamicBackendPortRangeEnd   = 29999
+)
+
+// reserveLoopbackAddress picks a free loopback port outside the ephemeral range
+// and returns it after closing the probe listener.
+func reserveLoopbackAddress(host string) (string, error) {
+	span := dynamicBackendPortRangeEnd - dynamicBackendPortRangeStart + 1
+	for attempt := 0; attempt < 256; attempt++ {
+		port := dynamicBackendPortRangeStart + rand.IntN(span)
+		ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		addr := ln.Addr().String()
+		return addr, ln.Close()
+	}
+	// Every probed port is taken. Failing closed is deliberate: a kernel-chosen
+	// fallback port comes from the ephemeral range, which is exactly where a
+	// listen-then-close reservation can be taken by another listener in the same
+	// process or host, so the fallback re-opens the collision this range exists to
+	// remove (kanban t_40da126d).
+	return "", fmt.Errorf("%w: %d-%d", ErrDynamicAddressExhausted, dynamicBackendPortRangeStart, dynamicBackendPortRangeEnd)
+}
+
+// dynamicAddressOwned reports whether the runtime owns the listener on addr.
+// Readiness only proves that something answers the dial; a published address
+// whose listener belongs to another process routes that backend's joins through
+// a foreign tunnel, which stalls them silently.
+func dynamicAddressOwned(proc *subprocessBackendProcess, addr string) bool {
+	if proc == nil || proc.cmd == nil || proc.cmd.Process == nil {
+		return false
+	}
+	owned, known := listenerOwnedByPID(addr, proc.cmd.Process.Pid)
+	if !known {
+		return true
+	}
+	return owned
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
