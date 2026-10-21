@@ -80,7 +80,8 @@ public final class VialiteBridge {
 
             shutdownServers();
             initializeViaProxy(nativeConfig);
-            VialitePreConnectGuard.configure(nativeConfig.handshakeDeadlineMs, nativeConfig.dialDeadlineMs);
+            VialitePreConnectGuard.configure(nativeConfig.handshakeDeadlineMs, nativeConfig.dialDeadlineMs,
+                    nativeConfig.configurationDeadlineMs);
 
             ViaProxy.EVENT_MANAGER.unregisterConsumer(ROUTE_EVENT_CONSUMER, PreConnectEvent.class);
             ViaProxy.EVENT_MANAGER.unregisterConsumer(CONNECT_EVENT_CONSUMER, ConnectEvent.class);
@@ -485,6 +486,14 @@ public final class VialiteBridge {
         private Long handshakeDeadlineMs;
         @SerializedName("dial_deadline_ms")
         private Long dialDeadlineMs;
+        /**
+         * Optional CONFIGURATION stage deadline in milliseconds: how long a join
+         * may sit past LoginSuccess without a single clientbound byte. Absent
+         * keeps the 15000 ms default (below Gate's 30000 ms read timeout); 0
+         * disables the stage.
+         */
+        @SerializedName("configuration_deadline_ms")
+        private Long configurationDeadlineMs;
 
         private static NativeConfig fromArgs(String[] args) throws Exception {
             if (args == null || args.length != 2 || !"--config".equals(args[0])) {

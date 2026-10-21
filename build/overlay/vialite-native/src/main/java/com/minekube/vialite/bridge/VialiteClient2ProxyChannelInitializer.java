@@ -28,6 +28,10 @@ public final class VialiteClient2ProxyChannelInitializer extends Client2ProxyCha
         // that reaches it and never dials a backend) must not stay silent.
         VialitePreConnectGuard.arm(channel);
         super.initChannel(channel);
+        // Install the CONFIGURATION stage watch once the upstream pipeline
+        // exists: a join that reaches CONFIGURATION and is then fed nothing is
+        // the second silent class, and it needs socket-level byte counters.
+        VialitePreConnectGuard.installConfigurationWatch(channel);
         channel.attr(MCPipeline.PACKET_REGISTRY_ATTRIBUTE_KEY).set(new VialitePacketRegistry(false, -1));
     }
 

@@ -62,6 +62,30 @@ protocol behaviour.
   the stage reached, and closes the connection so the join fails instead of
   hanging. It adds no translation behaviour and does not change any ViaProxy
   deadline.
+  The same guard also owns the CONFIGURATION stage, the hop's second silent
+  class: a join that logs `Connected successfully! Switching to CONFIGURATION
+  state` and then writes nothing toward the client (backend socket still being
+  read, client socket empty, no kick). `LoginSuccessWatch` arms the stage when
+  the runtime writes LoginSuccess toward Gate's bridge connection (1.20.2+
+  clients only — older clients have no CONFIGURATION state), a socket-level
+  counter records clientbound and serverbound bytes, and after
+  `configuration_deadline_ms` (default 15000 ms, below Gate's 30000 ms default
+  read timeout) with zero clientbound bytes — or an unwritable channel — the
+  connection is closed with one named diagnosis: player, backend with configured
+  and resolved address, stage, bytes in both directions and elapsed time. A
+  healthy join is never touched: the configuration burst (plugin.Message plus
+  ~40 kB of registry data) arrives within milliseconds of LoginSuccess.
+  The arm is deferred to the channel's next event-loop task: the login-success
+  write carries one promise through the whole outbound pipeline, the encoder
+  turns it into the bytes the socket sends, and `TrafficCounter` (at the head)
+  registers its write-completion listener on that same promise after
+  `LoginSuccessWatch` (at the tail) did. Promise listeners run in registration
+  order, so an inline arm would count the LoginSuccess write itself as
+  clientbound progress and the stage would never fire for a real stall — found
+  by the lab smoke in the native image (kanban t_bc6083f6).
+  `build/configstage-watch/run.sh` proves the branches on real Netty, with the
+  packet encoder kept in the test pipeline so this arm/count ordering is
+  covered.
 
 When bumping `build/via.version`, re-derive these files from the new upstream
 revision and re-apply only the deltas above — do not keep stale copies, since
