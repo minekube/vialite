@@ -197,7 +197,7 @@ jobs:
           path: craftless
 
       - name: Download PR native artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: vialite-pr-native-linux-amd64
           path: vialite-native
