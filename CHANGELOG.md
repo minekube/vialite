@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.10](https://github.com/minekube/vialite/compare/v0.3.9...v0.3.10) (2026-10-21)
+
+
+### Bug Fixes
+
+* **bridge:** bound the CONFIGURATION stage and arm it after the LoginSuccess write's bytes ([#60](https://github.com/minekube/vialite/issues/60)) ([8bd891a](https://github.com/minekube/vialite/commit/8bd891ab5c6905da358f2cc6ded69bb75e3ae870))
+
 ## [0.3.9](https://github.com/minekube/vialite/compare/v0.3.8...v0.3.9) (2026-10-20)
 
 
