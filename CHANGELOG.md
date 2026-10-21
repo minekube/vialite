@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.11](https://github.com/minekube/vialite/compare/v0.3.10...v0.3.11) (2026-10-21)
+
+
+### Bug Fixes
+
+* **overlay:** confine autoRead save/restore to the channel's event loop ([#62](https://github.com/minekube/vialite/issues/62)) ([dd1ff21](https://github.com/minekube/vialite/commit/dd1ff21c129c99bae84707e20fda8615e26163ba))
+
 ## [0.3.10](https://github.com/minekube/vialite/compare/v0.3.9...v0.3.10) (2026-10-21)
 
 
