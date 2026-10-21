@@ -35,7 +35,7 @@ thrown or logged.
 In-runtime trace of a cold join through a native build of this runtime (backend
 socket `ESTABLISHED`, receive queue growing, nothing read again):
 
-```
+```text
 +76ms  p2s loop: autoread DISABLE pushed=true  depth=1 autoRead=false   CompressionPacketHandler:47
 +76ms  p2s loop: autoread DISABLE pushed=false depth=2 autoRead=false   LoginPacketHandler:191
 +77ms  c2p loop: autoread RESTORE popped=false depth=1 autoRead=false   CompressionPacketHandler:51  (parked)
@@ -75,7 +75,7 @@ build/autoread-order/run.sh            # JAVA/JAVAC overridable, netty 4.2.19.Fi
 
 Observed (2026-10-21, Temurin 21 and Temurin 17):
 
-```
+```text
 upstream/red (traced-runtime schedule)  final: autoRead=false saved_depth=0 -> exit 1   (RED)
 upstream/healthy-control                final: autoRead=true  saved_depth=0 -> exit 0
 upstream/stress (observation)           iterations=20000 autoRead_left_false=4 (0.0200%) -> exit 1
