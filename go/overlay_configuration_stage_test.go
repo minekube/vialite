@@ -67,6 +67,15 @@ func TestOverlayConfigurationStageFailsClosedAfterLoginSuccess(t *testing.T) {
 	if !strings.Contains(guard, "promise.addListener(future -> {") {
 		t.Error("the CONFIGURATION stage must be armed after the LoginSuccess write completes, not when it is queued, or the stage timer starts before the client has anything")
 	}
+	// The arm must be deferred to the channel's next event-loop task: the
+	// encoder hands the very same promise to TrafficCounter, whose
+	// write-completion listener is registered after this one and therefore runs
+	// after it. An inline arm makes the guard count LoginSuccess itself as
+	// clientbound progress and the stage never fires for a real stall (found in
+	// the lab, kanban t_bc6083f6).
+	if !strings.Contains(guard, "channel.eventLoop().execute(() -> armConfigurationStage(channel") {
+		t.Error("the CONFIGURATION stage must be armed on the next event-loop task, not inline in the write-completion listener, or LoginSuccess itself counts as clientbound progress and the guard never fires")
+	}
 	if !strings.Contains(guard, "clientEntersConfiguration(") || !strings.Contains(guard, "ProtocolVersion.v1_20_2") {
 		t.Error("VialitePreConnectGuard.java no longer limits the CONFIGURATION stage to clients that have one (1.20.2+)")
 	}

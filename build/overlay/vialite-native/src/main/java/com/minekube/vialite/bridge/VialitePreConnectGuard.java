@@ -389,6 +389,19 @@ public final class VialitePreConnectGuard {
      * Switching to CONFIGURATION state" - and arms the stage after that write
      * completes, so the stage timer never counts LoginSuccess itself as
      * progress.
+     *
+     * <p>The arm is deferred to the channel's next event-loop task on purpose.
+     * The login-success write carries one promise through the whole outbound
+     * pipeline: the encoder turns this packet into the bytes the socket
+     * actually sends, and {@link TrafficCounter} registers its write-completion
+     * listener on that same promise <em>after</em> this handler did. Promise
+     * listeners run in registration order, so arming inline would set
+     * {@code armed} before the counter reports the LoginSuccess bytes and the
+     * guard would read its own LoginSuccess as clientbound progress and never
+     * fire - the stage would be inert for exactly the stall it exists for
+     * (found in the lab, kanban t_bc6083f6). Deferring the arm lets that whole
+     * completion batch run first, so only bytes written after LoginSuccess are
+     * counted.
      */
     static final class LoginSuccessWatch extends ChannelOutboundHandlerAdapter {
 
@@ -399,7 +412,11 @@ public final class VialitePreConnectGuard {
                 final String player = loginSuccess.name;
                 promise.addListener(future -> {
                     if (future.isSuccess()) {
-                        armConfigurationStage(channel, player);
+                        try {
+                            channel.eventLoop().execute(() -> armConfigurationStage(channel, player));
+                        } catch (Throwable t) {
+                            armConfigurationStage(channel, player);
+                        }
                     }
                 });
             }

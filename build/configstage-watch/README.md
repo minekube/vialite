@@ -11,7 +11,10 @@ neighbours (`Logger`, `ProxyConnection`, the login-success packet, the backend
 route descriptor) and real Netty 4.2.x jars. Each case drives the actual pipeline
 handlers on an `EmbeddedChannel`, at the positions
 `VialiteClient2ProxyChannelInitializer` installs them (byte counter at the
-socket end, `LoginSuccessWatch` at the packet end):
+socket end, `LoginSuccessWatch` at the packet end), with a stand-in packet
+encoder between them: that encoder is what turns the login-success packet into
+the bytes the counter sees, and it is why this suite now covers the arm/count
+ordering the native-image lab smoke exposed (kanban t_bc6083f6).
 
 | Case | What it asserts |
 | --- | --- |

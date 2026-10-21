@@ -403,7 +403,11 @@ public final class VialitePreConnectGuard {
                 final String player = loginSuccess.name;
                 promise.addListener(future -> {
                     if (future.isSuccess()) {
-                        armConfigurationStage(channel, player);
+                        try {
+                            channel.eventLoop().execute(() -> armConfigurationStage(channel, player));
+                        } catch (Throwable t) {
+                            armConfigurationStage(channel, player);
+                        }
                     }
                 });
             }

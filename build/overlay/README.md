@@ -75,7 +75,17 @@ protocol behaviour.
   and resolved address, stage, bytes in both directions and elapsed time. A
   healthy join is never touched: the configuration burst (plugin.Message plus
   ~40 kB of registry data) arrives within milliseconds of LoginSuccess.
-  `build/configstage-watch/run.sh` proves the branches on real Netty.
+  The arm is deferred to the channel's next event-loop task: the login-success
+  write carries one promise through the whole outbound pipeline, the encoder
+  turns it into the bytes the socket sends, and `TrafficCounter` (at the head)
+  registers its write-completion listener on that same promise after
+  `LoginSuccessWatch` (at the tail) did. Promise listeners run in registration
+  order, so an inline arm would count the LoginSuccess write itself as
+  clientbound progress and the stage would never fire for a real stall — found
+  by the lab smoke in the native image (kanban t_bc6083f6).
+  `build/configstage-watch/run.sh` proves the branches on real Netty, with the
+  packet encoder kept in the test pipeline so this arm/count ordering is
+  covered.
 
 When bumping `build/via.version`, re-derive these files from the new upstream
 revision and re-apply only the deltas above — do not keep stale copies, since

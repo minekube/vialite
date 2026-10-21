@@ -165,9 +165,34 @@ public final class ConfigurationStageProbe {
     private static EmbeddedChannel newChannel() {
         Logger.reset();
         // Head = socket side (byte counter), tail = packet side (login watch),
-        // exactly the two positions VialiteClient2ProxyChannelInitializer uses.
+        // exactly the three positions VialiteClient2ProxyChannelInitializer
+        // produces: the runtime's encoder sits between them and turns the
+        // login-success packet object into the bytes the counter sees. Keeping
+        // the encoder in the harness is what makes the fire-on-silence case
+        // real: without it the packet never reaches the counter as a ByteBuf
+        // and the arm/count ordering bug the lab found (kanban t_bc6083f6)
+        // stays invisible.
         return new EmbeddedChannel(new VialitePreConnectGuard.TrafficCounter(),
-                new VialitePreConnectGuard.LoginSuccessWatch());
+                new PacketEncoder(), new VialitePreConnectGuard.LoginSuccessWatch());
+    }
+
+    /**
+     * Stands in for ViaProxy's packet encoder: converts the login-success packet
+     * object into bytes and writes them down the pipeline with the same promise,
+     * which is what makes the guard's own LoginSuccess observable to
+     * {@link VialitePreConnectGuard.TrafficCounter}.
+     */
+    static final class PacketEncoder extends io.netty.channel.ChannelOutboundHandlerAdapter {
+
+        @Override
+        public void write(final io.netty.channel.ChannelHandlerContext ctx, final Object msg,
+                          final io.netty.channel.ChannelPromise promise) {
+            if (msg instanceof S2CLoginGameProfilePacket packet) {
+                ctx.write(Unpooled.wrappedBuffer(("encoded:" + packet.name).getBytes()), promise);
+                return;
+            }
+            ctx.write(msg, promise);
+        }
     }
 
     private static S2CLoginGameProfilePacket loginSuccess(final String player) {
