@@ -6,3 +6,4 @@ go/assets/vialite-*
 go/assets/libvialite-*
 *.tmp
 build/configstage-watch/lib/
+build/autoread-order/lib/
