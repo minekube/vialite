@@ -98,6 +98,19 @@ protocol behaviour.
   packet encoder kept in the test pipeline so this arm/count ordering is
   covered.
 
+- `vialite-native/build.gradle.kts`: the Linux aarch64 image is built for 64 KiB
+  pages (`-H:PageSize=65536`). GraalVM bakes the *build host's* page size into
+  the image, and an image only runs where the run-time page size is <= that
+  value, so images built on CI's 4 KiB arm64 runner could not start at all on a
+  16 KiB-page kernel — Raspberry Pi 5 firmware's default `kernel_2712.img`, and
+  Asahi Linux — failing before `main` with `Fatal error: Failed to create the
+  main Isolate. (code 24)`. 64 KiB alignment runs on 4K, 16K and 64K kernels;
+  amd64 and Windows keep the host page size on purpose, so the flag is emitted
+  only for Linux aarch64. `.github/workflows/native-image.yml` asserts the
+  section alignment of the built arm64 artifacts and
+  `go/native_image_pagesize_test.go` pins both halves — neither may be dropped
+  without replacing it.
+
 When bumping `build/via.version`, re-derive these files from the new upstream
 revision and re-apply only the deltas above — do not keep stale copies, since
 upstream API changes (renamed classes, new accessors) break the build.
