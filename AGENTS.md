@@ -105,6 +105,16 @@ Relevant workflow skills, when the agent runtime provides them:
   `build/via.version`.
 - Agents must still inspect the upstream diff and the attached validation runs
   before assuming a bump is safe.
+- Native image page size is part of the artifact contract, not a build detail.
+  The Linux aarch64 target forces `-H:PageSize=65536`
+  (`build/overlay/vialite-native/build.gradle.kts`): GraalVM bakes the build
+  host's page size into the image and only runs it where the run-time page size
+  is <= the build-time value, so images built on CI's 4 KiB arm64 runner could
+  not start on a 16 KiB kernel (Raspberry Pi 5 firmware's default kernel, Asahi
+  Linux) and died with `Fatal error: Failed to create the main Isolate. (code
+  24)`. `.github/workflows/native-image.yml` asserts the alignment of the built
+  arm64 artifacts and `go/native_image_pagesize_test.go` pins the flag and the
+  assertion; replace both deliberately rather than deleting them.
 - Releases publish checksummed native artifacts. Gate consumes those releases
   through its managed dependency update workflow.
 - Keep release-chain changes explicit: ViaLite release -> Gate managed
