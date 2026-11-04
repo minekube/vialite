@@ -79,7 +79,7 @@ jobs:
     timeout-minutes: 350
     steps:
       - name: Check out base branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.BASE_REF }}
 
