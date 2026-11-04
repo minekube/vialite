@@ -45,6 +45,42 @@ jobs:
             -t ghcr.io/minekube/vialite:native-ci-${{ matrix.arch }} \
             .
 
+      - name: Verify arm64 native artifacts target 64 KiB pages
+        if: matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A GraalVM native image bakes in the *build host's* page size and may
+          # only run where the run-time page size is <= that value
+          # (SubstrateOptions.getPageSize()). This runner has 4 KiB pages, so an
+          # image built without -H:PageSize cannot start on a 16 KiB kernel
+          # (Raspberry Pi 5 firmware's kernel_2712.img, Asahi Linux) and dies
+          # before main with "Fatal error: Failed to create the main Isolate."
+          # v0.3.11 shipped exactly that way. build/overlay/vialite-native/
+          # build.gradle.kts now passes -H:PageSize=65536 for Linux aarch64;
+          # assert the built files really carry it, so a runner or GraalVM pin
+          # change fails here instead of on an operator's Pi.
+          id="$(docker create ghcr.io/minekube/vialite:native-ci-arm64)"
+          trap 'docker rm -f "$id" >/dev/null 2>&1 || true' EXIT
+          mkdir -p pagecheck
+          docker cp "$id:/out/." pagecheck/
+          status=0
+          for artifact in pagecheck/vialite-linux-arm64 pagecheck/libvialite-linux-arm64.so; do
+            echo "== $artifact"
+            readelf -SW "$artifact" | grep -E '\.(text|rodata|svm_heap|data)\b' || true
+            for section in .text .rodata .svm_heap .data; do
+              align="$(readelf -SW "$artifact" | awk -v s="$section" '{ for (i = 1; i <= NF; i++) if ($i == s) { print $NF; exit } }')"
+              if [ -z "$align" ]; then
+                echo "::error file=$artifact::$section is missing from the image, so its page alignment cannot be checked"
+                status=1
+              elif [ "$align" -lt 65536 ]; then
+                echo "::error file=$artifact::$section is aligned to $align bytes, want at least 65536: the image carries this runner's 4 KiB page size and cannot start on a 16 KiB-page kernel (Raspberry Pi 5 default kernel, Asahi Linux) - check -H:PageSize in build/overlay/vialite-native/build.gradle.kts"
+                status=1
+              fi
+            done
+          done
+          exit "$status"
+
       - name: Extract Linux artifacts
         if: github.event_name != 'pull_request'
         run: |

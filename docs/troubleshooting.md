@@ -60,6 +60,41 @@ the Windows amd64 subprocess binary. If `Options.Version` is empty, `auto`, or
 are downloaded. Set `Options.BinaryPath` to bypass download and use a local
 binary.
 
+## Native Image Page Size (arm64)
+
+A GraalVM native image records the page size of the machine that built it and
+may only run where the run-time page size is **less than or equal to** that
+value. Arm64 artifacts were built on 4 KiB-page runners until the native build
+started forcing `-H:PageSize=65536`, so those older images cannot start on a
+16 KiB-page kernel — the Raspberry Pi 5 firmware's default `kernel_2712.img`,
+and Asahi Linux. The runtime dies before `main`, and because Gate starts it as a
+managed subprocess the proxy exits with it:
+
+```text
+level=INFO msg="vialite: resolved runtime" kind=binary source=cache version=v0.3.11 path=/home/gate/.cache/vialite/v0.3.11/<sha>/vialite-linux-arm64
+Fatal error: Failed to create the main Isolate. (code 24)
+error running Gate: error starting vialite: exit status 24
+```
+
+Nothing in `config.yml` changes that, and `via.mode: embedded` links the same
+4 KiB library. Check the artifact rather than the kernel string:
+
+```sh
+readelf -SW ~/.cache/vialite/<version>/<sha>/vialite-linux-arm64 | grep '\.svm_heap'
+# 4 KiB image (cannot run on a 16 KiB kernel):  ... .svm_heap ... 4096
+# fixed image (runs on 4, 16 and 64 KiB kernels): ... .svm_heap ... 65536
+```
+
+Interim, on a Raspberry Pi 5: boot the 4 KiB kernel by adding
+`kernel=kernel8.img` to `/boot/firmware/config.txt`, reboot, confirm
+`getconf PAGESIZE` reports 4096, and start Gate again. Both kernels ship in the
+boot partition, so no re-flash is needed; that is also slower than the 16 KiB
+`kernel_2712.img`, which is why it is only a workaround.
+
+The runtime is resolved on every Gate start, so a release that carries the
+64 KiB arm64 images applies on a Gate **restart** — no `config.yml` change. Once
+it is in place, remove `kernel=kernel8.img` again and reboot.
+
 ## Backend Detection
 
 The current native artifact is an ABI scaffold. The Go config already
