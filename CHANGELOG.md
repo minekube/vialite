@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.12](https://github.com/minekube/vialite/compare/v0.3.11...v0.3.12) (2026-11-04)
+
+
+### Bug Fixes
+
+* **build:** build the arm64 native image for 64 KiB pages ([#64](https://github.com/minekube/vialite/issues/64)) ([a14e5b3](https://github.com/minekube/vialite/commit/a14e5b3383b28d9e562f35cc9bb5ed32ccce8909))
+
 ## [0.3.11](https://github.com/minekube/vialite/compare/v0.3.10...v0.3.11) (2026-10-21)
 
 
