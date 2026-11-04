@@ -38,7 +38,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("org.graalvm.sdk:nativeimage:25.0.3")
+    compileOnly("org.graalvm.sdk:nativeimage:25.5.5.0.3")
     compileOnly(rootProject)
     runtimeOnly(project(":")) {
         isTransitive = false
